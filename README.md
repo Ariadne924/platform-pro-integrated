@@ -87,3 +87,10 @@ python -m pytest tests/ -q     # 基线 381 passed / 0 skipped
 ## License
 
 MIT，见 [LICENSE](LICENSE)。
+
+## 致谢
+
+本项目由两个开源项目合成而来，感谢其开发者的工作：
+
+- **exchangia**：分层内核（数据/因子/策略/评估/消费/运行时/交易商）与多标的因子计算接口。[github.com/Exchangia/exchangia](https://github.com/Exchangia/exchangia)
+- **sim_platform**：MD+impl 双文件因子/策略协议、评级与偏差控制算法、原生 JS+ECharts 四页 UI 与 API 形状。[github.com/JPGroupC/sim_platform](https://github.com/JPGroupC/sim_platform)
