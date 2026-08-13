@@ -87,6 +87,19 @@ data:
     enabled: true              # 启用本地缓存：已下载 K 线存 DuckDB，只增量拉取缺失区间
     path: data/cache.duckdb    # 缓存数据库文件路径
 
+  # 历史回填 (superplatform backfill / tools/backfill.py) — 走 Binance vision
+  # 归档(本机直连 fapi/api 超时,只有 data.binance.vision 可达)。
+  backfill:
+    # 数据完整边界: 永续自 2019-09-25(币安永续上线;更早的请求按空处理不报错,
+    # 注意 vision 的 UM 永续 kline 归档实际自 2019-12-31 起,fundingRate 自
+    # 2020-01 起,OI metrics 自 2020-09 起——源端再早没有,前缀记为已验证为空);
+    # 现货自 2019-01-01。
+    perpetual_start: "2019-09-25"
+    spot_start: "2019-01-01"
+    kline_frequencies: ["1m", "1d"]   # 回填 K 线频率
+    oi_frequency: "1d"                # OI 重采样频率(metrics 归档源为 5m)
+    chunk_months: 1                   # sub-daily kline 分块大小(月),逐块落库可断点续跑
+
   # Maximum simultaneous provider requests per Runtime invocation.
   # Exchange-specific rate limiters still apply underneath this bound.
   # vision-archive downloads bypass the REST limiter AND share one semaphore,
