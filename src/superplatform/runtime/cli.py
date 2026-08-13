@@ -644,6 +644,242 @@ def cmd_check(args) -> None:
             store.close()
 
 
+def _eval_service_context(args):
+    """04 评估类子命令的公共装配：config + providers + store + cache 路径。
+
+    Returns (config, providers, store, cache_path)。store 用毕必须 close()。
+    """
+    config = Config.load(args.config, "config/exchanges.yaml", "config/factors.yaml")
+    providers, store = _setup_providers(config)
+    cache_path = config.get("data.cache.path", "data/cache.duckdb")
+    return config, providers, store, cache_path
+
+
+def _symbols_arg(args) -> list[str] | None:
+    raw = getattr(args, "symbols", None)
+    if not raw:
+        return None
+    return [s.strip() for s in raw.split(",") if s.strip()] or None
+
+
+def _print_json(payload) -> None:
+    # ensure_ascii=True：GBK 控制台下重定向的 JSON 仍是纯 ASCII，可被任何
+    # UTF-8 读取方解析（非 ASCII 字符以 \uXXXX 转义，不改变内容）。
+    print(json.dumps(payload, ensure_ascii=True, indent=2))
+
+
+def cmd_rating(args) -> None:
+    """Factor rating (S~D) or leaderboard (04: evaluation/rating.py)."""
+    from superplatform.evaluation.rating import RatingService
+
+    if not args.leaderboard and not args.factor:
+        raise SystemExit("rating requires --factor <id> or --leaderboard")
+    if args.leaderboard and args.factor:
+        raise SystemExit("--leaderboard and --factor are mutually exclusive")
+
+    config, providers, store, cache_path = _eval_service_context(args)
+    service = RatingService(
+        config, providers, cache_path=cache_path, store=store,
+        symbols=_symbols_arg(args),
+    )
+    try:
+        if args.leaderboard:
+            ids = (
+                [s.strip() for s in args.ids.split(",") if s.strip()]
+                if getattr(args, "ids", None) else None
+            )
+            payload = service.leaderboard(
+                ids=ids, days=args.days, horizon=args.horizon, refresh=args.refresh,
+            )
+            if args.json:
+                _print_json(payload)
+            else:
+                print(f"评级榜（{payload['eval_window']['days']} 天窗口, "
+                      f"horizon={payload['eval_window']['horizon']}）")
+                print(f"{'Factor ID':<14} {'Grade':<6} {'Status':<14} {'RankIC':>9} "
+                      f"{'ICIR':>8} {'Sharpe':>8} {'Samples':>9}")
+                print("-" * 78)
+                for e in payload["entries"]:
+                    ric = f"{e['rank_ic_mean']:.4f}" if e.get("rank_ic_mean") is not None else "-"
+                    icir = f"{e['icir']:.3f}" if e.get("icir") is not None else "-"
+                    shp = f"{e['sharpe']:.2f}" if e.get("sharpe") is not None else "-"
+                    n = str(e.get("n_samples") or "-")
+                    print(f"{e['factor_id']:<14} {str(e.get('grade') or '-'):<6} "
+                          f"{e.get('rating_status') or '-':<14} {ric:>9} {icir:>8} {shp:>8} {n:>9}")
+                s = payload["summary"]
+                print(f"\n共 {s['total']} 个：rated={s['rated']} "
+                      f"insufficient={s['insufficient']} not_supported={s['not_supported']} "
+                      f"not_evaluated={s['not_evaluated']}（本次计算 {s['computed_this_call']}）")
+            return
+
+        payload = service.rate_factor(
+            args.factor, days=args.days, horizon=args.horizon, refresh=args.refresh,
+        )
+        if payload is None:
+            raise SystemExit(f"Factor '{args.factor}' not registered "
+                             "(双文件与 config 通道均未找到)")
+        if args.json:
+            _print_json(payload)
+        else:
+            agg = payload.get("aggregate") or {}
+            print(f"Factor: {payload['factor_id']} ({payload.get('name')})  "
+                  f"status={payload.get('status')}")
+            print(f"  Grade:     {agg.get('grade') or '-'}")
+            print(f"  RankIC:    {agg.get('rank_ic_mean')}")
+            print(f"  ICIR:      {agg.get('icir')}")
+            print(f"  Sharpe:    {agg.get('sharpe')}")
+            print(f"  Symbols:   {agg.get('n_symbols_ok')}/{agg.get('n_symbols')} ok, "
+                  f"samples={agg.get('n_samples')}")
+            for note in payload.get("notes") or []:
+                print(f"  note: {note}")
+        if payload.get("status") == "insufficient":
+            raise SystemExit(2)
+    finally:
+        if store:
+            store.close()
+
+
+def cmd_metrics(args) -> None:
+    """Factor evaluation metrics / qualification summary / correlation matrix (04)."""
+    from superplatform.evaluation.factor_metrics import FactorMetricsService
+
+    if not (args.factor or args.qualification_summary or args.correlation_matrix):
+        raise SystemExit("metrics requires --factor <id> | --qualification-summary | "
+                         "--correlation-matrix")
+
+    config, providers, store, cache_path = _eval_service_context(args)
+    service = FactorMetricsService(
+        config, providers, cache_path=cache_path, store=store,
+        symbols=_symbols_arg(args),
+    )
+    try:
+        if args.qualification_summary:
+            payload = service.qualification_summary(refresh=args.refresh)
+            _export_payload(args, payload, service.qualification_csv, "qualification")
+            if args.json or not args.output:
+                _print_json(payload)
+            s = payload["summary"]
+            print(f"qualification 汇总: total={s['total']} evaluated={s['evaluated']} "
+                  f"qualified={s['qualified']} unqualified={s['unqualified']} "
+                  f"not_evaluated={s['not_evaluated']}")
+            return
+
+        if args.correlation_matrix:
+            ids = (
+                [s.strip() for s in args.ids.split(",") if s.strip()]
+                if getattr(args, "ids", None) else None
+            )
+            payload = service.correlation_matrix(ids)
+            _export_payload(args, payload, service.correlation_csv, "correlation_matrix")
+            if args.json or not args.output:
+                _print_json(payload)
+            print(f"相关性矩阵: {len(payload.get('factor_ids') or [])} 因子 "
+                  f"(excluded={len(payload.get('excluded') or [])}, "
+                  f"truncated={payload.get('truncated')}, cache_hit={payload.get('cache_hit')})")
+            return
+
+        payload = service.factor_metrics(args.factor, force=args.refresh)
+        if payload is None:
+            raise SystemExit(f"Factor '{args.factor}' not registered "
+                             "(双文件与 config 通道均未找到)")
+        _export_payload(args, payload, service.metrics_csv, f"{args.factor}_metrics")
+        if args.json or not args.output:
+            _print_json(payload)
+        else:
+            print(f"Factor: {payload['factor_id']}  status={payload.get('status')} "
+                  f"(cache_hit={payload.get('cache_hit')})")
+            print(f"  RankIC:    {payload.get('rank_ic')}")
+            print(f"  IC:        {payload.get('ic')}")
+            print(f"  ICIR:      {payload.get('icir')}")
+            print(f"  Turnover:  {payload.get('turnover')}")
+            print(f"  Samples:   {payload.get('sample_count')}")
+            q = payload.get("qualification") or {}
+            print(f"  Qualified: {q.get('qualified')}  reasons={q.get('reasons')}")
+    finally:
+        if store:
+            store.close()
+
+
+def _export_payload(args, payload, csv_fn, stem: str) -> None:
+    """--output 导出：.csv 走 CSV 转换器，其余按 JSON。"""
+    output = getattr(args, "output", None)
+    if not output:
+        return
+    path = Path(output)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.suffix.lower() == ".csv":
+        path.write_text(csv_fn(payload), encoding="utf-8")
+    else:
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"Exported: {path}")
+
+
+def cmd_bias_check(args) -> None:
+    """六查批次（前视/全样本泄露/多重检验/过拟合/成本/样本外）+ 报告导出 (04)。"""
+    from superplatform.evaluation.bias import BiasControlService
+
+    if not args.all and not args.factor:
+        raise SystemExit("bias-check requires --factor <id> (repeatable) or --all")
+
+    config, providers, store, cache_path = _eval_service_context(args)
+    service = BiasControlService(
+        config, providers, cache_path=cache_path, store=store,
+        symbols=_symbols_arg(args),
+    )
+    try:
+        if args.all:
+            from superplatform.evaluation.bias import list_factor_records
+
+            factor_ids = [r.factor_id for r in list_factor_records(config)]
+            if not factor_ids:
+                raise SystemExit("无可评测因子（双文件与 config 通道均为空）")
+        else:
+            factor_ids = list(args.factor)
+
+        run = service.run(args.scope, factor_ids)
+        run_id = run["run_id"]
+
+        # 报告导出（md/json/csv 可组合）
+        out_dir = Path(args.output)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        exported = []
+        for fmt in (args.format or ["md", "json"]):
+            content, filename = service.report(run_id, fmt)
+            path = out_dir / filename
+            path.write_text(content, encoding="utf-8")
+            exported.append(str(path))
+
+        if args.json:
+            data = service.report_data(run_id)
+            _print_json(data)
+        else:
+            print(f"Bias check run: {run_id}  scope={args.scope}")
+            print(f"{'Factor ID':<14} {'Overall':<10} {'Look':<7} {'Full':<7} {'MT':<7} "
+                  f"{'Overfit':<8} {'Cost':<7} {'OOS'}")
+            print("-" * 84)
+            for r in run["results"]:
+                checks = r.get("checks") or {}
+                cells = [checks.get(k, {}).get("status", "-") for k in
+                         ("lookahead", "full_sample", "multiple_testing", "overfit", "cost")]
+                oos = (r.get("oos") or {}).get("status", "-")
+                print(f"{r['factor_id']:<14} {r['overall_status']:<10} "
+                      f"{cells[0]:<7} {cells[1]:<7} {cells[2]:<7} {cells[3]:<8} {cells[4]:<7} {oos}")
+                if r.get("failure_reason"):
+                    print(f"    -> {r['failure_reason']}")
+            s = run["summary"]
+            print(f"\nSummary: total={s['total']} PASS={s['pass']} FAIL={s['fail']} "
+                  f"BLOCKED={s['blocked']} ERROR={s['error']} LOCKED={s['locked']}")
+        for path in exported:
+            print(f"Report: {path}")
+
+        # 硬门槛语义与 03 check 一致：任一因子 FAIL/ERROR → exit 1
+        if any(r["overall_status"] in ("FAIL", "ERROR") for r in run["results"]):
+            raise SystemExit(1)
+    finally:
+        if store:
+            store.close()
+
+
 def cmd_live(args) -> None:
     """Run the live trading pipeline with the configured broker."""
     from superplatform.consumption.base import ConsumerConfig
@@ -932,6 +1168,77 @@ def main() -> None:
     p_check.add_argument("--end", default=None,
                          help="评估终点（仅双文件因子；默认 evaluation.sample_end）")
     p_check.set_defaults(func=cmd_check)
+
+    # rating (04: 因子评级 S~D + 评级榜)
+    p_rating = sub.add_parser(
+        "rating",
+        help="Factor rating (S~D, 近 N 天快速打分) or leaderboard (04)",
+    )
+    p_rating.add_argument("--factor", default=None,
+                          help="因子 ID；双文件因子（02 通道）直接用 factor_id，如 MOM-001")
+    p_rating.add_argument("--leaderboard", action="store_true",
+                          help="评级榜：无 --ids 时只读缓存（未评级标 not_evaluated），"
+                               "--ids 子集（≤20）同步计算")
+    p_rating.add_argument("--ids", default=None,
+                          help="逗号分隔因子 ID 子集（仅 --leaderboard；同步计算并落缓存）")
+    p_rating.add_argument("--days", type=float, default=None,
+                          help="评级窗口天数（默认 bias_control.rating_days=30）")
+    p_rating.add_argument("--horizon", type=int, default=None,
+                          help="前瞻收益期数，因子频率 bar 数（默认 bias_control.rating_horizon=24）")
+    p_rating.add_argument("--symbols", default=None,
+                          help="逗号分隔标的（默认 data.symbols.perpetual 研究池）")
+    p_rating.add_argument("--refresh", action="store_true",
+                          help="跳过缓存读强制重算（按原键覆盖落库）")
+    p_rating.add_argument("--json", action="store_true", help="输出 JSON")
+    p_rating.add_argument("--config", default="config/default.yaml")
+    p_rating.set_defaults(func=cmd_rating)
+
+    # metrics (04: 开发集深度评估指标 + 合格判定 + 相关性矩阵)
+    p_metrics = sub.add_parser(
+        "metrics",
+        help="Factor metrics (IC/RankIC/ICIR/衰减/分层/换手) + qualification (04)",
+    )
+    p_metrics.add_argument("--factor", default=None,
+                           help="因子 ID；双文件因子直接用 factor_id，如 MOM-001")
+    p_metrics.add_argument("--qualification-summary", action="store_true",
+                           help="全库合格判定汇总（只读缓存；--refresh 限量补算 ≤20 个）")
+    p_metrics.add_argument("--correlation-matrix", action="store_true",
+                           help="库级因子相关性矩阵（日频网格 Spearman，因子数封顶）")
+    p_metrics.add_argument("--ids", default=None,
+                           help="逗号分隔因子 ID 子集（仅 --correlation-matrix）")
+    p_metrics.add_argument("--symbols", default=None,
+                           help="逗号分隔标的（默认 data.symbols.perpetual 研究池）")
+    p_metrics.add_argument("--refresh", action="store_true",
+                           help="跳过缓存读强制重算（按原键覆盖落库）")
+    p_metrics.add_argument("--output", default=None,
+                           help="导出路径：.csv 导出 CSV（带 BOM），其余按 JSON")
+    p_metrics.add_argument("--json", action="store_true", help="输出 JSON")
+    p_metrics.add_argument("--config", default="config/default.yaml")
+    p_metrics.set_defaults(func=cmd_metrics)
+
+    # bias-check (04: 六查批次 + 报告导出)
+    p_bias = sub.add_parser(
+        "bias-check",
+        help="偏差控制六查（前视/全样本泄露/多重检验/过拟合/成本/样本外）+ 报告导出 (04)",
+    )
+    p_bias.add_argument("--factor", action="append", default=None,
+                        help="因子 ID（可重复）；多重检验家族 = 本批全部因子")
+    p_bias.add_argument("--all", action="store_true",
+                        help="全部可评测因子（双文件在册 + config 条目）")
+    p_bias.add_argument("--scope", default="development",
+                        choices=["development", "locked_oos"],
+                        help="development=开发集五查（样本外显示 LOCKED）；"
+                             "locked_oos=加跑锁定样本外（每因子仅允许成功一次）")
+    p_bias.add_argument("--symbols", default=None,
+                        help="逗号分隔标的（默认 data.symbols.perpetual 研究池）")
+    p_bias.add_argument("--output", default="reports/",
+                        help="报告导出目录（默认 reports/）")
+    p_bias.add_argument("--format", action="append", default=None,
+                        choices=["md", "json", "csv"],
+                        help="报告格式（可重复，默认 md+json）")
+    p_bias.add_argument("--json", action="store_true", help="输出 JSON 到 stdout")
+    p_bias.add_argument("--config", default="config/default.yaml")
+    p_bias.set_defaults(func=cmd_bias_check)
 
     # live
     p_live = sub.add_parser(

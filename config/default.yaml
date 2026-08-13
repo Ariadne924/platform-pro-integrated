@@ -233,3 +233,107 @@ live:
 visualization:
   theme: plotly_white
   output_dir: reports/
+
+# ==========================================================================
+# 偏差控制与因子评级（04 阶段新增段；语义移植自 sim_platform config.yaml 的
+# bias_control 段，由 evaluation/bias.py、factor_metrics.py、rating.py 读取）
+# 键名差异：源项目的 *_1m_* 桶在这里叫 *_intraday_*（语义=非 1d 因子按自身
+# 频率的 bar 粒度；本项目双文件因子多为 1h），horizon/窗口单位均为因子频率 bar。
+# ==========================================================================
+bias_control:
+  # 开发集区间（UTC）：多重检验/成本检查/评估指标只在该窗口内取数。
+  # 不配置时检查器兜底为「最近 default_window_days 天」，不退化为全历史扫描。
+  development_window:
+    start: "2021-01-01T00:00:00Z"
+    end: "2024-12-31T23:59:59Z"
+  # 锁定样本外区间（UTC）：配置后样本外状态为 LOCKED，且每个因子只允许
+  # 成功运行一次（eval_oos_lock 表持久化）。终点取 2026-08-01（缓存数据
+  # 覆盖到 2026-08-11，留归档滞后余量）。
+  out_of_sample_window:
+    start: "2025-01-01T00:00:00Z"
+    end: "2026-08-01T00:00:00Z"
+  # 前视检查截断点（UTC）：在每个截断点截断未来数据重算因子，
+  # 并与同一截断点之前的扩展重算值逐点比较；取开发集内三个年度中点。
+  lookahead_cutoffs:
+    - "2022-07-01T00:00:00Z"
+    - "2023-07-01T00:00:00Z"
+    - "2024-07-01T00:00:00Z"
+  # 前视比较容差：绝对容差 + 相对容差 × 被比较序列实际量级（逐点 |值| 中位数）
+  lookahead_abs_tolerance: 1e-8
+  lookahead_rel_tolerance: 1e-6
+  lookahead_min_samples: 30
+  # 多重检验：前向收益窗口（bar 数）、单 symbol 最小样本数、BH-FDR 显著性阈值
+  multiple_testing_horizon: 24
+  multiple_testing_min_samples: 50
+  multiple_testing_alpha: 0.05
+  multiple_testing_family: development_factor_family
+  # intraday（非 1d）因子多重检验窗口封顶：取开发集内最近 N 根 bar；1d 因子不限
+  multiple_testing_intraday_max_bars: 250000
+  # 成本假设：压力档位（bps/单边，累加在手续费+滑点之上）、信号中位数窗口（bar 数）
+  cost_scenarios_bps: [0, 2, 5, 10]
+  cost_horizon_bars: 24
+  cost_min_samples: 50
+  # 手续费 / 滑点 / 资金费率假设（bps）；execution_side 决定按 maker 还是 taker 计手续费
+  fee_maker_bps: 2
+  fee_taker_bps: 5
+  cost_execution_side: taker
+  slippage_bps: 2
+  funding_cost_bps: 0
+  # 锁定样本外执行参数：最小样本数、信号中位数窗口（bar 数）
+  oos_min_samples: 50
+  oos_signal_window: 24
+  # 因子评估指标（evaluation/factor_metrics.py：IC/RankIC/ICIR、IC 衰减、分层、
+  # 滚动稳定性、相关性矩阵）。评估窗口取 development_window。
+  # 1d 因子 IC 衰减 horizon（日）：1 天 ~ 约 3 个月
+  metrics_horizons_1d: [1, 5, 10, 20, 60]
+  # intraday 因子 IC 衰减 horizon（bar；1h 因子即 1h/6h/1d/3d/1周）
+  metrics_horizons_intraday: [1, 6, 24, 72, 168]
+  # 滚动稳定性窗口/步长（bar）：1d 为 120 日窗、20 日步长；intraday（1h）为 30 日窗、1 周步长
+  metrics_rolling_window_bars: 120
+  metrics_rolling_step_bars: 20
+  metrics_rolling_window_bars_intraday: 720
+  metrics_rolling_step_bars_intraday: 168
+  # 分层测试组数、单 symbol 最小有效样本（bar）
+  metrics_quantiles: 5
+  metrics_min_samples: 120
+  # intraday 因子评估窗口最大 bar 数（取开发集内最近一段，防分钟级全窗口计算超限）
+  metrics_intraday_max_bars: 250000
+  # 1d 因子重算 warmup（日）：固定值使所有因子共享同一 K 线缓存覆盖区间
+  metrics_warmup_bars: 400
+  # 指标与相关性矩阵 DuckDB 缓存（eval_metrics_cache / eval_corr_cache，
+  # 按 (factor_id, 参数指纹 + 数据版本) 键控）
+  metrics_cache_enabled: true
+  # 相关性矩阵因子数封顶（规模约束：不做在线 O(n²) 全库矩阵；超出按 factor_id
+  # 排序截断并在 truncated 字段如实标注）
+  metrics_corr_max_factors: 200
+  # 评级（evaluation/rating.py）：近 N 天窗口、前瞻 horizon（因子频率 bar 数）
+  rating_days: 30
+  rating_horizon: 24
+  # 未配置窗口时的兜底窗口天数
+  default_window_days: 365
+  # 参数搜索证据，按因子 ID 记录 frozen / retuned_on_oos 等字段。
+  # 无证据的因子过拟合检查保持 BLOCKED，不伪造 PASS。
+  parameter_search:
+    # MOM-001 为 02 阶段 demo 因子，window=20 自创建起未变（git 历史可查），
+    # 未在任何数据上调参。
+    MOM-001: {frozen: true, retuned_on_oos: false}
+  # 合格判定阈值（六项全过才合格：|IC|/p/|ICIR|/分层单调/|多空|/衰减比；
+  # 口径移植自 sim_platform，判定在 evaluation/factor_metrics.py 服务层推导）
+  qualification_rules:
+    # 库特化阈值：按因子 name/factor_id 前缀匹配（小写、'-' 归一为 '_'），
+    # 先匹配先生效；本项目暂无特化库，留空。
+    library: {}
+    # 未命中任何库前缀的因子使用默认阈值
+    default:
+      ic_min: 0.025
+      icir_min: 0.5
+      p_max: 0.05
+      decay_min_ratio: 0.5
+      long_short_min: 0.001
+    sensitivity_base: default
+    sensitivity:
+      ic_min: [0.005, 0.01, 0.015, 0.02, 0.025]
+      icir_min: [0.1, 0.2, 0.3, 0.4, 0.5]
+      p_max: [0.01, 0.03, 0.05, 0.07, 0.1]
+      decay_min_ratio: [0.1, 0.2, 0.3, 0.4, 0.5]
+      long_short_min: [0.0002, 0.0005, 0.001, 0.002, 0.005]
