@@ -43,7 +43,7 @@ console script 安装：`pip install -e . --no-deps`（pyproject 已声明 `supe
 
 ## 双文件因子/策略
 
-`factors/TEMPLATE.md`、`strategies/TEMPLATE.md` 是协议权威模板。一个插件 = 一份 MD（唯一事实来源）+ 一个 impl .py：
+格式规范：[`docs/因子格式说明.md`](docs/因子格式说明.md)、[`docs/策略格式说明.md`](docs/策略格式说明.md)（含校验规则一览与最小示例）。`factors/TEMPLATE.md`、`strategies/TEMPLATE.md` 是协议权威模板。一个插件 = 一份 MD（唯一事实来源）+ 一个 impl .py：
 
 - 因子 impl：`compute(data: dict[data_type, dict[symbol, DataFrame]], **params) -> FactorResult`，`FactorResult.values` 含 `timestamp/value` 两列。
 - 策略 impl：`generate_signals(factor_results) -> StrategySignal`，positions 列 `timestamp/symbol/position`。

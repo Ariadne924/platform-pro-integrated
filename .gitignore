@@ -12,3 +12,5 @@ sim_platform-main/
 *.duckdb.wal
 logs/
 reports/
+# 内部任务书，不入库（2026-08-13 从仓库撤出）
+task/
