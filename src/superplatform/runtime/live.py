@@ -96,6 +96,9 @@ class LiveRuntime:
         #                     factor_name → {symbol: FactorResult}
         self._data_buffer: dict[str, list] = {}
         self._active_strategy_name: str | None = None
+        # setup() 解析出的信号因子列表（双文件策略按 MD params 推导）；
+        # None = 未过 setup，_hook_factors 回退到 strategy.used_factors。
+        self._active_factor_names: list[str] | None = None
         self._data_primed: bool = False  # first tick does a bulk pre-fetch
         self._data_fetch_semaphore = asyncio.Semaphore(
             self._max_concurrent_requests()
@@ -115,12 +118,20 @@ class LiveRuntime:
 
     def setup(self, strategy_name: str | None = None) -> None:
         """Register hooks on the scheduler in strict execution order."""
+        from superplatform.runtime.dual import resolve_strategy_ex
+
         self._active_strategy_name = strategy_name
 
         if strategy_name:
-            strategy = self.strategies.get(strategy_name)
-            validate_used_factors_are_instances(strategy.used_factors)
+            # decorator 通道优先，未注册时回退双文件（02）通道；双文件策略的
+            # 信号因子由 MD params 推导（因子经 02 协议校验注册，不走实例治理）。
+            strategy, used_factors, is_dual = resolve_strategy_ex(strategy_name)
+            self._active_factor_names = used_factors
+            if not is_dual:
+                validate_used_factors_are_instances(strategy.used_factors)
 
+        # 每 tick 先对双文件因子/策略目录做 mtime 增量 diff（02 热插拔入口）。
+        self.scheduler.register_hook(self._hook_hot_reload)
         self.scheduler.register_hook(self._hook_data)
         self.scheduler.register_hook(self._hook_factors)
         self.scheduler.register_hook(self._hook_strategy)
@@ -146,6 +157,17 @@ class LiveRuntime:
     async def stop(self) -> None:
         logger.info("LiveRuntime stopped. Final equity: {:.2f}", self._state.equity())
         await self.scheduler.stop()
+
+    # ── Hook 0: 双文件热插拔 ────────────────────────────────────────
+
+    async def _hook_hot_reload(self, ctx: HookContext) -> None:
+        """每 tick 对双文件因子/策略插件目录做 mtime 增量 diff。
+
+        首扫之后的 ensure_scanned() 只做目录 glob + stat，数千文件规模下
+        也是亚秒级；有变更时只重扫变更文件（见 02 的 dual_registry）。
+        """
+        from superplatform.runtime.dual import scan_dual_registries
+        scan_dual_registries()
 
     # ── Hook 1: Data ────────────────────────────────────────────────
 
@@ -246,8 +268,16 @@ class LiveRuntime:
 
         import pandas as pd
 
+        from superplatform.factors.dual_registry import DualFactorRegistry
+
         strategy = self.strategies.get(self._active_strategy_name)
-        wanted = set(strategy.used_factors)
+        # setup() 已对双文件策略推导出信号因子；未过 setup 的直连调用
+        # 回退到策略声明的 used_factors。
+        wanted = set(
+            self._active_factor_names
+            if self._active_factor_names is not None
+            else strategy.used_factors
+        )
         known = set(self.factors.list_all()) | set(
             FactorInstanceRegistry.get_instance().list_all()
         )
@@ -258,7 +288,8 @@ class LiveRuntime:
             if "kline" not in factor.required_data:
                 continue
             cfg = factor_entry(self.config, factor_name)
-            if not cfg:
+            if not cfg and DualFactorRegistry.get_instance().get_record(factor_name) is None:
+                # 双文件因子（02 通道）没有 config 条目，按注册记录放行
                 continue
 
             try:
@@ -288,11 +319,16 @@ class LiveRuntime:
             return
 
         strategy = self.strategies.get(self._active_strategy_name)
+        wanted = (
+            self._active_factor_names
+            if self._active_factor_names is not None
+            else strategy.used_factors
+        )
 
         # Build factor_results dict in the format Strategy expects:
         #   {factor_name: {symbol: FactorResult}}
         factor_results: dict[str, dict[str, FactorResult]] = {}
-        for fn in strategy.used_factors:
+        for fn in wanted:
             per_sym = self._factor_results.get(fn, {})
             if per_sym:
                 factor_results[fn] = per_sym

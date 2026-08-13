@@ -283,6 +283,8 @@ class OfflineRuntime:
         config: Config,
         provider_registry: DataProviderRegistry,
         progress: ProgressFn | None = None,
+        *,
+        dual_factor_defaults: dict | None = None,
     ):
         self.config = config
         self.providers = provider_registry
@@ -291,6 +293,9 @@ class OfflineRuntime:
         FactorInstanceRegistry.get_instance().build_from_config(self.config, self.factors)
         self.strategies = StrategyRegistry.get_instance()
         self.strategies.auto_discover()
+        # 双文件因子（02 通道）无 config 条目时的评估默认覆盖项
+        # （symbols / start / end，来自 CLI --symbols/--start/--end）。
+        self._dual_factor_defaults = dual_factor_defaults or {}
         # Optional progress callback for long-running web jobs; None keeps the
         # runtime invisible to anything that doesn't want progress reporting.
         self._progress = progress
@@ -544,6 +549,20 @@ class OfflineRuntime:
 
         return group_data, all_kline, validation_reports
 
+    def _factor_config_entry(self, name: str) -> dict:
+        """Factor config entry, falling back to the dual-file (02) channel.
+
+        Dual-file factors have no config entry: a minimal evaluation config is
+        synthesised from the MD record (frequency / lookback), with symbols
+        defaulting to the research pool. Returns {} when the name is neither
+        configured nor a registered dual-file factor.
+        """
+        cfg = factor_entry(self.config, name)
+        if cfg:
+            return cfg
+        from superplatform.runtime.dual import dual_factor_entry
+        return dual_factor_entry(name, self.config, self._dual_factor_defaults)
+
     async def _evaluate_factor(
         self,
         name: str,
@@ -558,7 +577,7 @@ class OfflineRuntime:
         the heavy metrics (decay/layers/turnover/cost/rolling) and the
         forward-bias audit — enough for a factory parameter sweep.
         """
-        cfg = factor_entry(self.config, name)
+        cfg = self._factor_config_entry(name)
         if not cfg:
             raise ValueError(f"No config entry for factor '{name}'")
 
@@ -1010,15 +1029,21 @@ class OfflineRuntime:
         if consumer is None:
             consumer = ConsumerConfig.backtest()
 
-        strategy = self.strategies.get(strategy_name)
+        from superplatform.runtime.dual import periods_per_year, resolve_strategy_ex
+
+        # decorator 通道优先；未注册的名字回退双文件（02）通道，is_dual 时
+        # used_factors 由策略 MD params 推导（因子经 02 协议校验注册，
+        # 不走 decorator 通道的实例治理）。
+        strategy, used_factors, is_dual = resolve_strategy_ex(strategy_name)
         logger.info(f"Running strategy: {strategy_name} (consumer={consumer.consumer_id})")
 
-        validate_used_factors_are_instances(strategy.used_factors)
+        if not is_dual:
+            validate_used_factors_are_instances(used_factors)
 
         # ── Consistency check ─────────────────────────────────────
         factor_to_providers: dict[str, dict[str, str]] = {}
-        for factor_name in strategy.used_factors:
-            cfg = factor_entry(self.config, factor_name)
+        for factor_name in used_factors:
+            cfg = self._factor_config_entry(factor_name)
             if not cfg:
                 continue
             factor = resolve_factor(factor_name)
@@ -1041,8 +1066,8 @@ class OfflineRuntime:
         all_price_data: dict[str, pd.DataFrame] = {}
         fetcher = _DataFetchCoordinator(self._max_concurrent_requests())
 
-        for factor_name in strategy.used_factors:
-            cfg = factor_entry(self.config, factor_name)
+        for factor_name in used_factors:
+            cfg = self._factor_config_entry(factor_name)
             if not cfg:
                 raise ValueError(f"No config for factor '{factor_name}'")
             raw_symbols = cfg.get("symbols", ["S1"])
@@ -1079,9 +1104,16 @@ class OfflineRuntime:
         # Trading costs come from the same evaluation.cost section the factor
         # cost-sensitivity path uses; absent config → zero cost.
         cost_cfg = self.config.get("evaluation.cost") or {}
+        # Annualisation follows the bar frequency of the first signal factor
+        # (1d → 365, the historical default; dual-file factors may declare
+        # sub-daily frequencies in their MD).
+        bar_frequency = None
+        if used_factors:
+            bar_frequency = self._factor_config_entry(used_factors[0]).get("frequency")
         bt = backtest(
             signal.positions,
             all_price_data,
+            periods_per_year=periods_per_year(bar_frequency),
             taker_fee_bps=float(cost_cfg.get("taker_fee_bps", 0.0)),
             slippage_bps=float(cost_cfg.get("slippage_bps", 0.0)),
         )

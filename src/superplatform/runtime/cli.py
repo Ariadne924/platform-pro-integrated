@@ -176,6 +176,18 @@ def cmd_factors_list(args) -> None:
             print(f"    -> 冲突: {r['conflict']}")
 
 
+def _dual_factor_defaults_from_args(args) -> dict:
+    """CLI --symbols/--start/--end → 双文件因子评估默认覆盖项。"""
+    symbols = getattr(args, "symbols", None)
+    return {
+        "symbols": (
+            [s.strip() for s in symbols.split(",") if s.strip()] if symbols else None
+        ),
+        "start": getattr(args, "start", None),
+        "end": getattr(args, "end", None),
+    }
+
+
 def cmd_evaluate(args) -> None:
     """Run factor evaluation pipeline."""
     if not args.all and not args.factor:
@@ -187,7 +199,10 @@ def cmd_evaluate(args) -> None:
     providers, store = _setup_providers(config)
 
     try:
-        runtime = OfflineRuntime(config, providers)
+        runtime = OfflineRuntime(
+            config, providers,
+            dual_factor_defaults=_dual_factor_defaults_from_args(args),
+        )
         factor_names = None if args.all else args.factor
         results = asyncio.run(runtime.run(factor_names, output_dir=args.output))
 
@@ -224,6 +239,15 @@ def _run_deliver(results) -> None:
     import pandas as pd
 
     from superplatform.evaluation.experiment import ExperimentRunner
+
+    # 前视检查是硬门槛：FAIL 的因子一律不交付。
+    failed = [r.factor_name for r in results if not r.forward_bias_passed]
+    if failed:
+        print(f"Forward Bias FAIL — 不交付: {', '.join(failed)}")
+    results = [r for r in results if r.forward_bias_passed]
+    if not results:
+        print("No deliverable factor passed the forward-bias gate.")
+        return
 
     frames = [r.cross_section for r in results if not r.cross_section.empty]
     if not frames:
@@ -291,7 +315,10 @@ def cmd_backtest(args) -> None:
         else:
             consumer = ConsumerConfig.backtest()
 
-        runtime = OfflineRuntime(config, providers)
+        runtime = OfflineRuntime(
+            config, providers,
+            dual_factor_defaults=_dual_factor_defaults_from_args(args),
+        )
         result = asyncio.run(runtime.run_strategy(
             args.strategy, output_dir=args.output, consumer=consumer,
         ))
@@ -592,19 +619,26 @@ def cmd_backfill(args) -> None:
 
 
 def cmd_check(args) -> None:
-    """Run forward-bias check for a factor."""
+    """Run forward-bias check for a factor (hard gate: FAIL → exit 1)."""
     config = Config.load(args.config, "config/exchanges.yaml", "config/factors.yaml")
     providers, store = _setup_providers(config)
 
     try:
-        runtime = OfflineRuntime(config, providers)
+        runtime = OfflineRuntime(
+            config, providers,
+            dual_factor_defaults=_dual_factor_defaults_from_args(args),
+        )
         results = asyncio.run(runtime.run([args.factor], output_dir="reports"))
 
+        all_passed = True
         for r in results:
             status = "PASS" if r.forward_bias_passed else "FAIL"
             print(f"{r.factor_name}: Forward Bias — {status}")
             if not r.forward_bias_passed:
+                all_passed = False
                 print("  This factor has forward-looking bias and MUST be fixed!")
+        if not all_passed:
+            raise SystemExit(1)
     finally:
         if store:
             store.close()
@@ -616,13 +650,34 @@ def cmd_live(args) -> None:
     from superplatform.network.brokers import build_broker
 
     config = Config.load("config/default.yaml", "config/exchanges.yaml", "config/factors.yaml")
-    providers, cache_store = _setup_providers(config)
+    # CLI 覆盖项只改内存中的 config，不回写配置文件。
+    live_cfg = config.to_dict().setdefault("live", {})
+    if getattr(args, "broker", None):
+        live_cfg["broker"] = args.broker
+    if getattr(args, "interval", None):
+        live_cfg["tick_interval_seconds"] = args.interval
+    if getattr(args, "symbols", None):
+        live_cfg["symbols"] = [s.strip() for s in args.symbols.split(",") if s.strip()]
 
-    broker = build_broker(config)
+    # Broker 构建失败（如 binance-testnet 缺 API key）必须报错退出——
+    # 绝不静默降级为模拟盘。
+    try:
+        broker = build_broker(config)
+    except RuntimeError as exc:
+        raise SystemExit(f"live 启动失败: {exc}")
+
+    providers, cache_store = _setup_providers(config)
 
     consumer = ConsumerConfig.backtest()
     live = LiveRuntime(config, providers, broker, consumer=consumer)
     live.setup(strategy_name=args.strategy)
+
+    # 跑满 N 个 tick 后自动停止（便于验收与冒烟测试）。
+    if getattr(args, "ticks", 0) and args.ticks > 0:
+        async def _stop_after_ticks(ctx) -> None:
+            if ctx.tick_no >= args.ticks:
+                await live.scheduler.stop()
+        live.scheduler.register_hook(_stop_after_ticks)
 
     # Optional: DuckDB persistence for live trading state (separate from cache)
     live_store = None
@@ -632,11 +687,16 @@ def cmd_live(args) -> None:
 
     async def run_loop():
         print(f"Live trading started: strategy={args.strategy}, broker={broker.name}")
-        print("Press Ctrl+C to stop.\n")
+        if args.ticks > 0:
+            print(f"Running {args.ticks} ticks (interval={live.scheduler.interval:.1f}s).\n")
+        else:
+            print("Press Ctrl+C to stop.\n")
 
         tick_task = asyncio.create_task(live.start())
 
-        if args.duration > 0:
+        if args.ticks > 0:
+            await tick_task
+        elif args.duration > 0:
             await asyncio.sleep(args.duration)
             await live.stop()
         else:
@@ -647,6 +707,15 @@ def cmd_live(args) -> None:
 
         state = live.state
         print(f"\nFinal: equity={state.equity():.2f} wallet={state.wallet_balance:.2f}")
+        if state.positions:
+            print("Positions:")
+            for key, pos in sorted(state.positions.items()):
+                print(
+                    f"  {key}: qty={pos.qty:.6f} entry={pos.entry_price:.2f} "
+                    f"mark={pos.mark_price:.2f} upnl={pos.unrealized_pnl:.2f}"
+                )
+        else:
+            print("Positions: (none)")
         orders = await broker.get_orders()
         trades = await broker.get_trades()
         print(f"Orders: {len(orders)}, Trades: {len(trades)}")
@@ -799,13 +868,22 @@ def main() -> None:
     # evaluate
     p_eval = sub.add_parser("evaluate")
     p_eval.add_argument("--factor", action="append", required=False,
-                       help="Factor to evaluate (repeatable)")
+                       help="Factor to evaluate (repeatable); 双文件因子（02 通道）"
+                            "直接用 factor_id，如 MOM-001")
     p_eval.add_argument("--all", action="store_true",
                        help="Evaluate all configured factors")
     p_eval.add_argument("--config", default="config/default.yaml")
     p_eval.add_argument("--output", default="reports/")
+    p_eval.add_argument("--symbols", default=None,
+                       help="逗号分隔标的（仅对无 config 条目的双文件因子生效；"
+                            "默认取 data.symbols.perpetual 研究池）")
+    p_eval.add_argument("--start", default=None,
+                       help="评估起点（仅双文件因子；默认 evaluation.sample_start）")
+    p_eval.add_argument("--end", default=None,
+                       help="评估终点（仅双文件因子；默认 evaluation.sample_end）")
     p_eval.add_argument("--deliver", action="store_true",
-                       help="After evaluation, run the full deliverable pipeline")
+                       help="After evaluation, run the full deliverable pipeline "
+                            "(前视 FAIL 的因子不交付)")
     p_eval.set_defaults(func=cmd_evaluate)
 
     # deliver
@@ -824,9 +902,17 @@ def main() -> None:
 
     # backtest
     p_bt = sub.add_parser("backtest")
-    p_bt.add_argument("--strategy", required=True)
+    p_bt.add_argument("--strategy", required=True,
+                      help="策略名；双文件策略（02 通道）直接用 strategy_id，如 DEM-001")
     p_bt.add_argument("--config", default="config/default.yaml")
     p_bt.add_argument("--output", default="reports/")
+    p_bt.add_argument("--symbols", default=None,
+                      help="逗号分隔标的（仅对双文件策略的信号因子生效；"
+                           "默认取 data.symbols.perpetual 研究池）")
+    p_bt.add_argument("--start", default=None,
+                      help="评估起点（仅双文件策略；默认 evaluation.sample_start）")
+    p_bt.add_argument("--end", default=None,
+                      help="评估终点（仅双文件策略；默认 evaluation.sample_end）")
     p_bt.add_argument("--strictness", default=None,
                       choices=["strict", "warn", "silent"],
                       help="Provider-broker consistency check policy")
@@ -836,8 +922,15 @@ def main() -> None:
 
     # check
     p_check = sub.add_parser("check")
-    p_check.add_argument("--factor", required=True)
+    p_check.add_argument("--factor", required=True,
+                         help="因子名；双文件因子（02 通道）直接用 factor_id")
     p_check.add_argument("--config", default="config/default.yaml")
+    p_check.add_argument("--symbols", default=None,
+                         help="逗号分隔标的（仅双文件因子；默认 data.symbols.perpetual）")
+    p_check.add_argument("--start", default=None,
+                         help="评估起点（仅双文件因子；默认 evaluation.sample_start）")
+    p_check.add_argument("--end", default=None,
+                         help="评估终点（仅双文件因子；默认 evaluation.sample_end）")
     p_check.set_defaults(func=cmd_check)
 
     # live
@@ -847,9 +940,20 @@ def main() -> None:
              "(live.broker: simulated | binance-testnet)",
     )
     p_live.add_argument("--strategy", required=True,
-                        help="Strategy to run")
+                        help="策略名；双文件策略（02 通道）直接用 strategy_id，如 DEM-001")
     p_live.add_argument("--duration", type=int, default=0,
                         help="Run for N seconds (0=forever)")
+    p_live.add_argument("--ticks", type=int, default=0,
+                        help="跑满 N 个 tick 打印账户权益/持仓后退出（0=不限制；"
+                             "优先于 --duration）")
+    p_live.add_argument("--interval", type=float, default=None,
+                        help="覆盖 live.tick_interval_seconds（秒，仅本次进程生效）")
+    p_live.add_argument("--symbols", default=None,
+                        help="逗号分隔标的（覆盖 live.symbols，仅本次进程生效）")
+    p_live.add_argument("--broker", default=None,
+                        choices=["simulated", "binance-testnet"],
+                        help="覆盖 live.broker（仅本次进程生效）；binance-testnet "
+                             "缺环境变量 API key 会报错退出，不降级为模拟盘")
     p_live.add_argument("--store", default=None,
                         help="DuckDB path for persistence")
     p_live.set_defaults(func=cmd_live)

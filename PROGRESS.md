@@ -397,3 +397,272 @@ git status --porcelain 新增 → factors/、strategies/、src/.../factors/{prot
   即可获得热插拔；decorator 通道 `FactorRegistry.reload()` 会清表，双文件侧已在每次增量后
   `_sync_into_factor_registry()` 自愈。
 - impl 加载会在插件 impl/ 目录写 `__pycache__`（.gitignore 已覆盖，快照只 glob *.md/*.py 不受影响）。
+
+---
+
+# 03 阶段详情（PROGRESS_03.md 并入）
+
+# PROGRESS_03.md — 03 核心运行时（已完成，2026-08-13）
+
+理解的目标：把 exchangia 的评估/回测/实时模拟盘/testnet 接上 02 的双文件因子/策略与
+01 的 DuckDB 数据，打通「数据 → 双文件因子 → 策略 → 回测/模拟盘 → 下单」链路。
+策略只出仓位权重、消费层转订单；总敞口 100% 封顶；方向反转拆单；前视 FAIL 不交付；
+testnet key 只读环境变量、缺 key 报错退出不降级。
+
+## 接线设计（一个改动点一句话）
+
+- 02 的双文件注册中心把校验通过的因子/策略以 ID 为名注册进
+  `FactorRegistry` / `StrategyRegistry` 单例——运行时的消费入口不变，变的只有
+  「config 条目从哪来」和「策略的信号因子列表从哪来」。
+- 双文件因子没有 config 条目 → 新增 `runtime/dual.py::dual_factor_entry` 按 MD 记录
+  合成最小评估配置（frequency 取 MD 声明；symbols 默认研究池
+  `data.symbols.perpetual` 40 标的——截面 IC 需要 ≥20 标的/期；start/end 回落
+  `evaluation.sample_*`；params 已由 02 包装层并入 compute，不重复下发）。
+- 双文件策略 `used_factors=[]`（impl 按 MD params 里的因子 ID 自取输入）→
+  `dual.py::dual_strategy_factor_ids` 从策略 MD params 识别「取值是已注册因子
+  ID/实例名」的参数（DEM-001 的 `params.factor: MOM-001` → `["MOM-001"]`）。
+- `dual.py::resolve_strategy_ex`：decorator 通道优先，KeyError 时触发双文件增量
+  扫描再重试；双文件策略跳过实例治理校验（因子已经 02 协议校验注册）。
+- 扫描时机（PROGRESS_02 留给 03 的集成点）：`dual_factor_entry` /
+  `resolve_strategy_ex` 内按需 `ensure_scanned()`；LiveRuntime 注册
+  `_hook_hot_reload` 每 tick 调两个注册中心的 `ensure_scanned()`（首扫后每次仅
+  mtime diff）。decorator-only 的旧测试路径不触发任何双文件扫描（懒触发），
+  注册表单例不被污染（381 基线守住的关键）。
+
+## 改动文件（全部在 03 地界）
+
+- **新增 `src/superplatform/runtime/dual.py`**：上述接线层 +
+  `periods_per_year`（1d=365 … 1h=8760，回测年化按 K 线频率）。
+- **`src/superplatform/runtime/pipeline.py`**：
+  - `OfflineRuntime(..., *, dual_factor_defaults=None)`（新 keyword 参数，默认 None，
+    web/测试的旧调用零影响）；
+  - 新 `_factor_config_entry(name)`：config 条目优先，缺失时回退双文件合成条目；
+    `_evaluate_factor` 与 `run_strategy` 的取数/一致性检查统一走它（原
+    `factor_entry` 直调仅这两处+evaluate_grid 未动）；
+  - `run_strategy` 改用 `resolve_strategy_ex`；回测年化 `periods_per_year` 按首个
+    信号因子的频率（1d→365，与既有行为一致；双文件 1h→8760）。
+- **`src/superplatform/runtime/live.py`**：
+  - `setup()` 用 `resolve_strategy_ex`（双文件策略可启动）；信号因子列表存
+    `self._active_factor_names`；新增 `_hook_hot_reload`（每 tick 增量扫描）；
+  - `_hook_factors` / `_hook_strategy` 的因子清单改用 `_active_factor_names`
+    （修复：双文件策略 `used_factors=[]` 导致 live 永远不出信号）；
+  - `_hook_factors` 的 config 门槛放行已注册双文件因子。
+- **`src/superplatform/runtime/cli.py`**：
+  - `evaluate`/`check`/`backtest` 加 `--symbols/--start/--end`（仅对双文件通道
+    生效，有 config 条目的因子/策略行为不变）；`check` 前视 FAIL 时 exit 1（硬门槛）；
+  - `_run_deliver` 硬门槛：前视 FAIL 的因子不交付（打印名单），全 FAIL 不产出；
+  - `live` 加 `--ticks N`（跑满 N tick 打印权益/持仓退出，优先于 --duration）、
+    `--interval`、`--symbols`、`--broker`（后三个只改内存 config 不回写文件）；
+    `build_broker` 的 RuntimeError → `SystemExit` 报错退出（缺 key 不降级模拟盘）；
+    结束后打印逐持仓明细。既有 backfill/factors list/validate-report 逻辑未动。
+
+## 验收记录（全部为实际命令输出）
+
+### 任务 1：`evaluate --factor MOM-001`（双文件因子，全默认）
+
+```
+.venv/Scripts/python.exe -m superplatform.runtime.cli evaluate --factor MOM-001 --output reports/
+# 40 标的（data.symbols.perpetual）× 1h × 2021-01-01→2025-06-30，
+# 01 缓存未覆盖的 1h 由 CachingProvider 走 vision 归档补齐（机制同 01，非直连 API），
+# 全程约 2.5 分钟，此后落缓存。
+============================================================
+Factor: MOM-001
+  ICIR:        -0.0345
+  Mean IC:     -0.0118
+  IC > 0:      48.67%
+  Layers:      5
+  Avg Turnover: 0.3339
+  Forward Bias: PASS
+  Cost scenarios: 1
+  Report: reports//MOM-001_report.html
+```
+
+报告截面齐全（grep reports/MOM-001_report.html）：`IC Over Time` / `IC Decay` /
+`Layer Test (Cumulative)` / `Turnover` / `Rolling IC` / `ICIR: -0.0345` 均在，
+标题含 Forward Bias PASS。RankIC 在 `PipelineResult.rank_ic_df`（40 标截面）；
+ICIR/IC/分层/换手见上。
+
+### 任务 1：`check --factor MOM-001` 通过
+
+```
+.venv/Scripts/python.exe -m superplatform.runtime.cli check --factor MOM-001
+  → exit=0；日志尾行: MOM-001: Forward Bias — PASS
+```
+
+### 任务 1 反向验证：含未来数据的因子必须 FAIL（红→绿）
+
+临时因子 `imports/factors/LAH-001_lookahead_zscore.md` + `impl/lookahead_zscore.py`
+（z-score 的均值/标准差用全样本计算 = 前视），验完已删：
+
+```
+check --factor LAH-001 --start 2024-01-01 --end 2025-06-30
+  → LAH-001: Forward Bias — FAIL
+    This factor has forward-looking bias and MUST be fixed!
+  → exit=1（硬门槛）
+evaluate --factor LAH-001 --start 2024-01-01 --end 2025-06-30 --deliver
+  → LAH-001: ICIR=-0.0343, bias=FAIL
+    Forward Bias: FAIL
+    Forward Bias FAIL — 不交付: LAH-001
+    No deliverable factor passed the forward-bias gate.   （exit=0 但零交付）
+```
+
+清理后（新进程，mtime 增量扫描）：`LAH-001 after cleanup: None` /
+`MOM-001 still registered: True`。GREEN 侧即上方 MOM-001 的 PASS。
+
+### 任务 2：`backtest --strategy DEM-001`（双文件策略）
+
+```
+.venv/Scripts/python.exe -m superplatform.runtime.cli backtest --strategy DEM-001
+  → exit=0（缓存已暖，秒级）
+Strategy: DEM-001
+  Sharpe:       -0.87
+  Total Return: -98.39%
+  Annual Return:-60.11%
+  Annual Vol:   69.15%
+  Max Drawdown: -99.23%
+  Win Rate:     46.87%
+  Avg Return:   -0.0078%
+```
+
+（demo 阈值策略在 1h 动量上稳定亏钱属预期——指标为真实计算，年化按 1h=8760。）
+
+### 任务 2：`live --ticks 5`（SimulatedBroker 模拟盘）
+
+```
+.venv/Scripts/python.exe -m superplatform.runtime.cli live --strategy DEM-001 --ticks 5 --interval 1 --symbols BTCUSDT,ETHUSDT
+  → exit=0；无 Traceback（grep 验证）
+Live trading started: strategy=DEM-001, broker=simulated-synthetic
+Running 5 ticks (interval=1.0s).
+[tick 5] BTCUSDT=59587.73, ETHUSDT=57899.60 | 0.03s
+Order placed: BTCUSDT buy 0.8391 filled
+Order rejected: ETHUSDT buy — Insufficient balance: need 50025.00, wallet 49990.00
+Final: equity=99990.00 wallet=49990.00
+Positions:
+  BTCUSDT:spot: qty=0.839099 entry=59587.73 mark=59587.73 upnl=0.00
+Orders: 5, Trades: 5
+```
+
+5 tick 后自动退出；权益非零（100000 → 99990，taker fee）；持仓逐行打印。
+同时可见消费层死规矩在工作：2 标的各 50%（总敞口 100% 封顶 → 等权 1/N），
+首单锁定保证金后次单余额不足被拒（拒单路径的真实演示）。
+
+### 任务 2 反向验证：超资金订单必须被拒
+
+```
+SimulatedBroker(initial_capital=100_000), price=50000:
+  buy 100 BTC（名义 5,000,000 > max_order_notional 100,000）
+  → order=None | "Order notional 5000000 > max 100000"     （拒）
+对照 buy 0.1 BTC → status=filled                              （放）
+REVERSE-CHECK OK: oversized order rejected
+```
+
+方向反转拆单（死规矩）：
+
+```
+持 0.5 BTC 多头 + 目标 position=-1.0 → generate_orders:
+  close  qty=0.5000      （先平多）
+  short  qty=2.0000      （再开空）
+SPLIT-ORDER OK: long->short 拆成 close + short
+```
+
+### 任务 3：testnet
+
+```
+无 key:
+  live --strategy DEM-001 --ticks 1 --broker binance-testnet
+  → exit=1
+  → "live 启动失败: binance-testnet requires API keys in environment variables:
+     BINANCE_TESTNET_API_KEY, BINANCE_TESTNET_API_SECRET"
+  （报错退出，非静默降级为模拟盘；broker 构建先于 DuckDB/数据层初始化）
+有 key（dummy）连通性:
+  curl https://testnet.binancefuture.com/fapi/v1/ping → 200 (0.58s)
+  BINANCE_TESTNET_API_KEY=dummy ... build_broker() 成功（broker=binance-testnet，
+  key 仅从环境变量读）→ broker._fetch_account() 收到 Binance 服务端
+  ClientError (401, -2014, 'API-key format invalid.')
+  —— 即网络通、签名请求路由正确，仅凭据无效。真 key 全流程未验，见 BLOCKED_03.md。
+```
+
+## pytest 与地界自查
+
+```
+.venv/Scripts/python.exe -m pytest tests/ -q -p no:cacheprovider
+381 passed, 1 warning in 33.68s        # = 基线 381 / 0 skipped
+
+git status --short
+ M src/superplatform/runtime/cli.py
+ M src/superplatform/runtime/live.py
+ M src/superplatform/runtime/pipeline.py
+?? src/superplatform/runtime/dual.py
+```
+
+全在 03 地界（runtime/**）。未碰 tests/、config 阈值、01 地界（data/、tools/）、
+02 地界（factors/、strategies/、imports/ 仅临时放 LAH-001 反向验证，验完即删）、
+未写任何 HTTP 路由；无 skip/todo/mock/|| true。未 commit（交总控）。
+
+## 拍板与已知限制
+
+- **evaluate 默认全研究池 + MD 频率**：双文件因子评估默认 symbols 取
+  `data.symbols.perpetual`（40 标的，满足 min_stocks=20 的截面 IC 门槛），
+  频率取 MD 声明（MOM-001=1h）。首次评估的 1h 数据由 CachingProvider 走 vision
+  归档补齐并入缓存（与 01 回填同机制、同表同 provider_id，不是直连 API）。
+- **回测年化按频率**：`run_strategy` 现在按首个信号因子的频率给
+  `periods_per_year`（1d=365 与旧行为一致；1h=8760）。config 里全部既有因子
+  都是 1d，旧测试数值不变。
+- **live 单标的因子的共享值（搬运件既有行为，未改）**：`_hook_factors` 对整个
+  symbol buffer 只调一次 `factor.compute` 并把同一 FactorResult 挂到每个 symbol
+  下；MOM-001 这类「取 values()[0]」的单标的 impl 在 live 里会让所有标的拿到
+  第一个标的的因子值（demo 可接受）。离线评估/回测无此问题（按组逐标的计算）。
+  05/后续若要 live per-symbol 精度，改 `_hook_factors` 的分组调用即可。
+- **live 持仓方向**：`generate_orders` 以 buy/close/short 表达（spot+perp 混合
+  语义是 exchangia 消费层原样），DEM-001 的多单落成 spot 持仓属既有语义。
+- reports/ 产物（MOM-001_report.html 等）为运行时输出，.gitignore 覆盖不入库。
+
+## 留给 04/05 的集成说明（可调用入口签名）
+
+```python
+# 离线评估（双文件因子直接用 factor_id；decorator/config 因子照旧）
+from superplatform.runtime.pipeline import OfflineRuntime, PipelineResult
+runtime = OfflineRuntime(config, provider_registry,
+                         progress=None,                  # 可选进度回调 fn(dict)
+                         dual_factor_defaults=None)      # {"symbols": [...], "start": ..., "end": ...}
+results: list[PipelineResult] = await runtime.run(
+    ["MOM-001"], output_dir="reports", skip_report=False, lightweight=False)
+# PipelineResult: factor_name/per_symbol/cross_section/ic_df/ic_stats/rank_ic_df/
+#   rank_ic_stats/ic_decay_df/layer_results/turnover_df/rolling_df/
+#   forward_bias_passed/forward_bias_reports/cost_summary/validation_reports
+
+# 策略回测（双文件策略直接用 strategy_id）
+result = await runtime.run_strategy("DEM-001", output_dir="reports",
+                                    consumer=ConsumerConfig.backtest())
+# result: {"signal": StrategySignal, "backtest": BacktestResult,
+#          "factor_results": dict[factor, dict[group, FactorResult]]}
+# BacktestResult: equity/trades/total_return/annual_return/annual_vol/sharpe/
+#   max_drawdown/win_rate/avg_return/liquidated_at
+
+# 实时模拟盘 / testnet
+from superplatform.runtime.live import LiveRuntime
+from superplatform.network.brokers import build_broker     # live.broker 决定实现；缺 key 抛 RuntimeError
+broker = build_broker(config, adapter=None, symbols=None)
+live = LiveRuntime(config, provider_registry, broker,
+                   consumer=ConsumerConfig.backtest(),    # 或 Strictness 变体
+                   limits=None, symbols=None)             # symbols=会话级标的覆盖
+live.setup(strategy_name="DEM-001")                       # 双文件策略直接可用
+await live.start()                                        # 阻塞直到 stop()
+await live.stop()
+live.state                                                # AccountState 本地镜像（equity()/positions）
+live.scheduler.snapshot()                                 # tick_no/prices/stale 等
+live.scheduler.register_hook(hook)                        # 自定义每 tick 钩子（如 N tick 自停）
+
+# 双文件接线工具（04 评级若消费双文件因子可复用）
+from superplatform.runtime.dual import (
+    scan_dual_registries,          # 两注册中心各一次增量扫描（热插拔入口）
+    dual_factor_entry,             # (factor_id, config, overrides) -> 合成 config 条目
+    dual_strategy_factor_ids,      # strategy_id -> [信号因子 ID]
+    resolve_strategy_ex,           # name -> (strategy, used_factors, is_dual)
+    periods_per_year,              # 频率 -> 年化 bar 数
+)
+```
+
+注意：DuckDB 缓存单进程写锁——同一时刻只能一个进程打开 `data/cache.duckdb`
+（评估/回测/live 并发跑会撞 `IO Error: Cannot open file`），05 的 API 映射
+若起后台任务需串行化或复用同一进程内的 store。
