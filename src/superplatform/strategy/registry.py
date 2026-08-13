@@ -27,6 +27,10 @@ class StrategyRegistry:
         else:
             self._strategies[cls_or_instance.name] = cls_or_instance
 
+    def unregister(self, name: str) -> None:
+        self._strategies.pop(name, None)
+        self._instances.pop(name, None)
+
     def get(self, name: str) -> Strategy:
         if name in self._instances:
             return self._instances[name]

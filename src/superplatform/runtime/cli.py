@@ -103,17 +103,28 @@ def cmd_validate(args) -> None:
 
 
 def cmd_factors_list(args) -> None:
-    """List registered factory factors and configured instances."""
+    """List registered factors: decorator/config channel + dual-file channel.
+
+    The dual-file channel (builtin factors/ + imports/factors/) is where the
+    factor library scales to thousands, so it is paginated and filterable;
+    `ensure_scanned()` applies an mtime incremental diff on every call so
+    hot-dropped files show up without a restart.
+    """
+    from superplatform.factors.dual_registry import DualFactorRegistry
     from superplatform.factors.instance_registry import FactorInstanceRegistry
 
     registry = FactorRegistry.get_instance()
     registry.auto_discover()
     config = Config.load(args.config, "config/exchanges.yaml", "config/factors.yaml")
     FactorInstanceRegistry.get_instance().build_from_config(config, registry)
+    dual = DualFactorRegistry.get_instance()
 
+    print("== decorator / config 通道 ==")
     print(f"{'Name':<30} {'Kind':<10} {'Category':<25} {'#Sym':<6} {'Data Types'}")
     print("-" * 90)
     for name in registry.list_all():
+        if dual.get_record(name) is not None:
+            continue  # 双文件通道注册进来的实例在下方专区展示
         f = registry.get(name)
         syms = str(f.required_symbols) if f.required_symbols is not None else "any"
         print(f"{name:<30} {'factory':<10} {f.category.value:<25} {syms:<6} {', '.join(f.required_data)}")
@@ -124,6 +135,45 @@ def cmd_factors_list(args) -> None:
             f"{name:<30} {'instance':<10} {inst.category.value:<25} {syms:<6} "
             f"{', '.join(inst.required_data)}  (factory={inst.factory_name}, params={inst.params})"
         )
+
+    # ---- 双文件通道（factors/ + imports/factors/），分页/过滤 ----
+    dual.ensure_scanned()
+    rows = dual.list_factors()
+    if args.filter:
+        needle = args.filter.lower()
+        rows = [
+            r for r in rows
+            if needle in (r["factor_id"] or "").lower() or needle in r["name"].lower()
+        ]
+    if args.category:
+        rows = [r for r in rows if r["category"] == args.category]
+    if args.status:
+        rows = [r for r in rows if r["status"] == args.status]
+    if args.source != "all":
+        rows = [r for r in rows if r["source"] == args.source]
+
+    total = len(rows)
+    page_size = max(1, args.page_size)
+    pages = max(1, (total + page_size - 1) // page_size)
+    page = min(max(1, args.page), pages)
+    chunk = rows[(page - 1) * page_size: page * page_size]
+
+    print()
+    print(f"== 双文件通道（factors/ + imports/factors/）== "
+          f"共 {total} 个，第 {page}/{pages} 页（每页 {page_size}）")
+    print(f"{'Factor ID':<12} {'Name':<24} {'Category':<16} {'Status':<11} "
+          f"{'Freq':<6} {'Src':<8} {'Version'}")
+    print("-" * 90)
+    for r in chunk:
+        print(
+            f"{(r['factor_id'] or '-'):<12} {r['name']:<24} {(r['category'] or '-'):<16} "
+            f"{r['status']:<11} {(r['frequency'] or '-'):<6} {r['source']:<8} "
+            f"{r['version'] or '-'}"
+        )
+        for err in r["validation_errors"]:
+            print(f"    -> 规则{err['rule_no']} | 字段[{err['field']}] | {err['message']}")
+        if r.get("conflict"):
+            print(f"    -> 冲突: {r['conflict']}")
 
 
 def cmd_evaluate(args) -> None:
@@ -504,16 +554,41 @@ def cmd_validate_report(args) -> None:
         else:
             print("No data fetched (check provider config / network).")
 
+    max_missing_pct = getattr(args, "max_missing_pct", None)
+    if max_missing_pct is None:
+        cfg = Config.load(args.config, "config/exchanges.yaml", "config/factors.yaml")
+        try:
+            max_missing_pct = float(cfg.get("data.validation.max_missing_pct", 10.0))
+        except (TypeError, ValueError):
+            max_missing_pct = 10.0
+
     artifacts = generate_validation_report(
         cache_path,
         args.output,
         data_types=args.data_type,
         outlier_method=args.outlier_method,
         outlier_threshold=args.outlier_threshold,
+        max_missing_pct=max_missing_pct,
     )
     print(f"Verdict: {artifacts.verdict}")
     print(f"Report:  {artifacts.markdown_path}")
     print(f"JSON:    {artifacts.json_path}")
+
+
+def cmd_backfill(args) -> None:
+    """Backfill historical kline/funding/OI into the DuckDB cache.
+
+    Vision-archive only (no REST): reuses DataCache/CachingProvider so the
+    run is incremental — re-running the same command resumes from the
+    cached bookmarks. See superplatform.data.backfill for the design.
+    """
+    from superplatform.data.backfill import run_backfill, settings_from_config
+
+    config = Config.load(args.config, "config/exchanges.yaml")
+    settings = settings_from_config(config, args, proxy=_first_exchange_proxy(config))
+    code = run_backfill(settings)
+    if code:
+        raise SystemExit(code)
 
 
 def cmd_check(args) -> None:
@@ -641,12 +716,84 @@ def main() -> None:
                       help="Outlier threshold (deviations); default 15 keeps "
                            "only pathological values — crypto bars routinely "
                            "move several MADs without being data errors")
+    p_vr.add_argument("--max-missing-pct", type=float, default=None,
+                      help="缺失占比告警阈值(百分数);默认取 config "
+                           "data.validation.max_missing_pct (10),超过标 WARN")
     p_vr.set_defaults(func=cmd_validate_report)
+
+    # backfill (G1 数据回填: Binance vision 归档 → DuckDB 缓存, 增量/断点续跑)
+    p_bf = sub.add_parser(
+        "backfill",
+        help="Backfill historical kline/funding/OI into the DuckDB cache "
+             "(Binance vision archives, incremental)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""\
+全量回填(40 永续 + BTC/ETH 现货, 2019→now, 1m+1d+funding+OI):
+  superplatform backfill --all
+  标的取自 config/default.yaml 的 data.symbols(40 个 USDT-M 永续 +
+  BTC/ETH 现货); 时间边界取 data.backfill.perpetual_start(2019-09-25,
+  币安永续上线;更早请求按空处理不报错)与 data.backfill.spot_start
+  (2019-01-01); 数据类型 kline(1m+1d) + funding_rate + open_interest。
+  预计量级: 1m 约 1.5 亿行(40 永续 × ~350 万 + 2 现货 × ~400 万),
+  归档下载 ~5GB,首次全量数小时;1d/funding/OI 合计仅数十万行,分钟级。
+断点续跑: 重复执行同一条命令即可——已覆盖区间按缓存/empty_ranges 书签
+  跳过,只补缺口与最新尾部,中断不丢已落库分块。
+示例:
+  superplatform backfill --symbols BTCUSDT,ETHUSDT --market both
+  superplatform backfill --symbols-file symbols.txt --market perpetual
+  superplatform backfill --all --data-type kline --kline-frequencies 1d
+""",
+    )
+    p_bf.add_argument("--symbols", default=None,
+                      help="逗号分隔标的,如 BTCUSDT,ETHUSDT(也接受 BTC/USDT)")
+    p_bf.add_argument("--symbols-file", default=None,
+                      help="标的清单文件,每行一个(# 后为注释)")
+    p_bf.add_argument("--all", action="store_true",
+                      help="全量: config data.symbols 的 40 永续 + BTC/ETH 现货")
+    p_bf.add_argument("--market", default="both",
+                      choices=["perpetual", "spot", "both"],
+                      help="回填哪个市场;both = 同一符号两个市场各一份(分表不混)")
+    p_bf.add_argument("--start", default=None,
+                      help="UTC 起点(如 2019-09-25);默认按 data.backfill 边界: "
+                           "永续 2019-09-25,现货 2019-01-01。永续早于 2019-09-25 "
+                           "按空处理不报错")
+    p_bf.add_argument("--end", default=None,
+                      help="UTC 终点(默认 now;vision 归档 T+1,最新一天下次补)")
+    p_bf.add_argument("--data-type", action="append", default=None,
+                      choices=["kline", "funding_rate", "open_interest"],
+                      help="只回填这些类型(可重复);默认全部")
+    p_bf.add_argument("--kline-frequencies", default=None,
+                      help="逗号分隔,默认取 config data.backfill.kline_frequencies "
+                           "(1m,1d)")
+    p_bf.add_argument("--oi-frequency", default=None,
+                      help="OI 重采样频率,默认取 config(1d);源归档为 5m")
+    p_bf.add_argument("--chunk-months", type=int, default=None,
+                      help="sub-daily kline 分块大小(月),默认取 config(1)")
+    p_bf.add_argument("--cache", default=None,
+                      help="DuckDB 缓存路径(默认 config data.cache.path)")
+    p_bf.add_argument("--config", default="config/default.yaml")
+    p_bf.set_defaults(func=cmd_backfill)
 
     # factors
     p_factors = sub.add_parser("factors")
     p_factors_sub = p_factors.add_subparsers(dest="factors_command")
     p_list = p_factors_sub.add_parser("list")
+    p_list.add_argument("--config", default="config/default.yaml",
+                        help="Config for factory instances (default.yaml)")
+    p_list.add_argument("--page", type=int, default=1,
+                        help="双文件通道页码（默认 1）")
+    p_list.add_argument("--page-size", type=int, default=50,
+                        help="双文件通道每页条数（默认 50）")
+    p_list.add_argument("--filter", default=None,
+                        help="按 factor_id/name 子串过滤（不区分大小写）")
+    p_list.add_argument("--category", default=None,
+                        help="按 MD category 精确过滤（如 momentum/volatility）")
+    p_list.add_argument("--status", default=None,
+                        choices=["draft", "active", "deprecated", "invalid", "conflict"],
+                        help="按状态过滤；invalid=校验失败，conflict=与内置冲突被压制")
+    p_list.add_argument("--source", default="all",
+                        choices=["all", "builtin", "imports"],
+                        help="按来源过滤：builtin=内置 factors/，imports=imports/factors/")
     p_list.set_defaults(func=cmd_factors_list)
 
     # evaluate
@@ -713,3 +860,8 @@ def main() -> None:
         sys.exit(0)
 
     args.func(args)
+
+
+if __name__ == "__main__":
+    main()
+
