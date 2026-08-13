@@ -1,0 +1,222 @@
+# Superplatform — Default Configuration
+# All paths are relative to the project root.
+
+project:
+  name: superplatform
+  version: "0.1.0"
+
+defaults:
+  exchange: binance         # binance | synthetic — where all evaluations pull data
+  market: perpetual         # perpetual | spot — contract type for kline / OI
+  # Global per-data_type provider override (optional). When set, this data
+  # type is served by the given provider regardless of defaults.exchange /
+  # defaults.market — primarily for non-exchange / vendor sources and for
+  # deliberate per-data-type deviations. Omit for exchange-native data types.
+  providers: {}
+
+data:
+  # UTC only — enforced by validators
+  timezone: UTC
+
+  # Default symbols for research — curated liquid USDⓈ-M perpetual majors.
+  # The full market universe is fetched from Binance exchangeInfo at startup
+  # (see the universe sync); this pool is the offline / startup fallback.
+  symbols:
+    perpetual:
+      - BTCUSDT
+      - ETHUSDT
+      - BNBUSDT
+      - SOLUSDT
+      - XRPUSDT
+      - DOGEUSDT
+      - ADAUSDT
+      - AVAXUSDT
+      - LINKUSDT
+      - DOTUSDT
+      - TRXUSDT
+      - POLUSDT
+      - LTCUSDT
+      - BCHUSDT
+      - UNIUSDT
+      - ATOMUSDT
+      - FILUSDT
+      - NEARUSDT
+      - APTUSDT
+      - ARBUSDT
+      - OPUSDT
+      - INJUSDT
+      - TIAUSDT
+      - SEIUSDT
+      - SUIUSDT
+      - PEPEUSDT
+      - WIFUSDT
+      - SHIBUSDT
+      - MEMEUSDT
+      - FLOKIUSDT
+      - BONKUSDT
+      - ICPUSDT
+      - HBARUSDT
+      - VETUSDT
+      - AAVEUSDT
+      - MKRUSDT
+      - ETCUSDT
+      - XLMUSDT
+      - TONUSDT
+      - JUPUSDT
+    spot:
+      - BTCUSDT
+      - ETHUSDT
+
+  # Default kline frequencies
+  frequencies:
+    - 1m
+    - 5m
+    - 15m
+    - 1h
+    - 4h
+    - 1d
+
+  # Storage
+  cache_dir: data/cache
+  output_format: parquet  # parquet or csv
+
+  # DuckDB-backed incremental data cache.
+  # When enabled, kline data fetched from exchanges is persisted locally
+  # and only missing date ranges are fetched on subsequent runs.
+  cache:
+    enabled: true              # 启用本地缓存：已下载 K 线存 DuckDB，只增量拉取缺失区间
+    path: data/cache.duckdb    # 缓存数据库文件路径
+
+  # Maximum simultaneous provider requests per Runtime invocation.
+  # Exchange-specific rate limiters still apply underneath this bound.
+  # vision-archive downloads bypass the REST limiter AND share one semaphore,
+  # so this value is the effective parallelism cap for multi-symbol cold
+  # fetches (universe pool is ~40) — the vision client's own 8-way default is
+  # overridden by this value at provider setup.
+  max_concurrent_requests: 16
+
+  # Validation
+  validation:
+    outlier_method: mad      # mad or zscore
+    outlier_threshold: 5.0
+    max_missing_pct: 10.0    # max % missing allowed per column
+
+# Symbol groups — named, kind-dispatched symbol selectors (see
+# superplatform.factors.symbol_groups). kind: list = explicit `symbols`;
+# top_n = top-N by 24h quote volume. User-saved groups live in
+# config/user_symbol_groups.yaml (gitignored) and merge into this section.
+symbol_groups:
+  core_two:
+    kind: list
+    description: 核心双标的
+    symbols: [BTCUSDT, ETHUSDT]
+
+  top10_volume:
+    kind: top_n
+    description: 按 24h 成交额 Top 10
+    n: 10
+
+# Factor evaluation defaults
+evaluation:
+  # Sample split
+  sample_start: "2021-01-01"   # 样本内评估区间开始
+  sample_end: "2025-06-30"     # 样本内评估区间结束
+  oos_start: "2025-07-01"      # 6-month locked out-of-sample — DO NOT TOUCH
+  oos_end: "2025-12-31"
+
+  # IC
+  ic:
+    method: pearson            # pearson or spearman
+    min_stocks_per_period: 20  # 截面分析所需的最少标的数；低于此数那天不算 IC，避免过薄截面。
+                               # 与前端默认预选标的数(≈30)错开，保证多数交易日能凑够截面
+
+  # IC decay
+  ic_decay:
+    max_horizon: 20            # 最大衰减期数（t+1..t+N）
+
+  # Stratification
+  layers: 5                    # 分层测试默认层数
+
+  # Rolling stability
+  rolling_window: 60           # 滚动稳定性窗口（日）
+  rolling_step: 20             # 滚动步长（日）
+
+  # Cost assumptions (explicit per Task 1)
+  cost:
+    maker_fee_bps: 2.0         # maker 手续费，单位 bps
+    taker_fee_bps: 4.0         # taker 手续费，单位 bps
+    slippage_bps: 3.0          # 滑点假设，单位 bps
+
+  # Forward bias check (hard gate)
+  forward_bias:
+    n_cutoffs: 5               # 渐进截断次数
+    tolerance: 1e-12           # 数值容差
+    groups: representative     # 审计粒度: representative=每因子审计数据最长的代表组; all=逐组全量审计
+
+  # CPU 线程数: 因子计算与前视审计的并行度, 0=自动(2~8)
+  cpu_workers: 0
+
+# Live trading & paper trading
+live:
+  # Broker backend: simulated | binance-testnet
+  #   simulated        — 本地撮合（默认，无需 API key）
+  #   binance-testnet  — Binance USDT-M 期货模拟盘（testnet.binancefuture.com），
+  #                      API key 从环境变量读取（见 binance_testnet.api_key_env）
+  broker: simulated
+
+  # 交易标的。空列表 = 沿用 data.symbols.perpetual；binance-testnet 必须显式
+  # 列出（如 ["BTCUSDT"]），因为 testnet 撮合只在已订阅的标的上进行。
+  symbols: []
+
+  # Tick interval in seconds — how often the scheduler loop runs.
+  # 10s is a safe default for 5-symbol subscriptions on Binance public API.
+  tick_interval_seconds: 10    # 调度循环 tick 间隔（秒）
+
+  # Data staleness threshold. If the latest data point is older than
+  # this, the scheduler marks the symbol as stale and emits a warning.
+  staleness_threshold_seconds: 90
+
+  # WebSocket / reconnection
+  reconnect:
+    max_retries: 10
+    base_delay_seconds: 1.0
+    max_delay_seconds: 60.0
+    backoff_multiplier: 2.0
+
+  # Heartbeat
+  heartbeat_interval_seconds: 30
+  heartbeat_timeout_seconds: 90
+
+  # Paper trading
+  paper:
+    initial_capital_usdt: 100000.0   # 模拟盘初始资金（USDT）
+    maker_fee_bps: 2.0               # 模拟盘 maker 手续费（bps）
+    taker_fee_bps: 5.0               # 模拟盘 taker 手续费（bps）
+
+  # Binance USDT-M futures testnet (live.broker: binance-testnet)
+  # API keys are ALWAYS read from environment variables — never from config.
+  binance_testnet:
+    base_url: "https://testnet.binancefuture.com"
+    api_key_env: "BINANCE_TESTNET_API_KEY"
+    api_secret_env: "BINANCE_TESTNET_API_SECRET"
+    default_leverage: 10       # ≥3，避免 1x 满仓触发 margin insufficient
+    # Signed-request recvWindow (ms). Binance's server default is 5000ms; bump
+    # it so a small local clock skew (error -1021) doesn't break every signed
+    # call. Keep high only for testnet — a wide window widens replay risk.
+    recv_window_ms: 30000
+
+  # Risk limits (paper trading)
+  risk:
+    max_leverage: 20.0               # 最大杠杆倍数
+    max_position_notional_per_symbol: 100000.0
+    max_order_notional: 100000.0
+    maintenance_margin_rate: 0.005  # 0.5%
+
+  # Persistence
+  database:
+    path: data/live.duckdb
+
+# Visualization
+visualization:
+  theme: plotly_white
+  output_dir: reports/

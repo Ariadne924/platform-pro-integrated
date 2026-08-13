@@ -1,0 +1,69 @@
+[project]
+name = "superplatform"
+version = "0.1.0"
+description = "Quantitative trading research framework — multi-exchange, multi-factor, evaluation-first"
+readme = "README.md"
+authors = [
+    { name = "Superplatform Team" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.0.0",
+    "numpy>=1.26.0",
+    "pydantic>=2.0.0",
+    "pyarrow>=14.0.0",
+    "matplotlib>=3.8.0",
+    "seaborn>=0.13.0",
+    "plotly>=5.18.0",
+    "scipy>=1.11.0",
+    "websocket-client>=1.6.0",
+    "loguru>=0.7.0",
+    "pyyaml>=6.0",
+    "tqdm>=4.66.0",
+    "joblib>=1.3.0",
+    "pandera>=0.22.0",
+    "duckdb>=1.0.0",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+    "binance-connector>=3.13.0",
+    "binance-futures-connector>=4.2.0",
+    "ruamel-yaml>=0.19.1",
+    "python-dotenv>=1.0.0",
+]
+
+[tool.mypy]
+plugins = ["pandera.mypy"]
+
+[project.scripts]
+superplatform = "superplatform.runtime.cli:main"
+superplatform-web = "superplatform_web.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.9.4,<0.10.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+# uv installs the `dev` dependency-group by default, so a plain `uv sync`
+# gives a fresh checkout the full dev environment (tests + linters + profilers).
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.1.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.3.0",
+    "mypy>=1.8.0",
+    "httpx>=0.27.0",
+    "py-spy>=0.4.2",
+    "pyinstrument>=5.1.3",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

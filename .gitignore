@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+# 参考源（只读副本，不入库）
+exchangia-master/
+sim_platform-main/
+# 运行时产物
+data/
+*.duckdb
+*.duckdb.wal
+logs/
+reports/
+imports/
+web/

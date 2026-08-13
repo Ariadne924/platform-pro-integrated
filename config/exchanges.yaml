@@ -1,0 +1,46 @@
+# Exchange-specific configuration
+# API keys are loaded from environment variables, NOT stored here.
+
+exchanges:
+  binance:
+    enabled: true
+    # Rate limits (documented by Binance)
+    rate_limits:
+      - max_requests: 1200
+        window_seconds: 60
+        weight: 1
+      - max_requests: 50
+        window_seconds: 1
+        weight: 10
+    # Proxy (for mainland China users — also overridable via HTTPS_PROXY env var)
+    proxy: ""   # e.g. "http://127.0.0.1:7890" (Clash default)
+    # API endpoints
+    rest_url: "https://api.binance.com"
+    ws_url: "wss://stream.binance.com:9443/ws"
+    futures_rest_url: "https://fapi.binance.com"
+    futures_ws_url: "wss://fstream.binance.com/ws"
+    # Historical data
+    historical_data_url: "https://data.binance.vision"
+    # Defaults
+    default_market_type: perpetual
+    max_klines_per_request: 1500
+    max_trades_per_request: 1000
+
+    # WebSocket stream subscriptions (for subscribe_* / live mode)
+    websocket:
+      ping_interval_seconds: 180       # Binance requires ping every 3 min
+      max_subscriptions_per_conn: 200  # Binance limit per single WS connection
+      combined_streams: true           # use /stream?streams=... for batch subscribe
+
+  # Second exchange (choose one: OKX, Bybit, etc.)
+  okx:
+    enabled: false
+    rate_limits:
+      - max_requests: 20
+        window_seconds: 2
+        weight: 1
+      - max_requests: 60
+        window_seconds: 60
+        weight: 1
+    rest_url: "https://www.okx.com"
+    ws_url: "wss://ws.okx.com:8443/ws/v5/public"

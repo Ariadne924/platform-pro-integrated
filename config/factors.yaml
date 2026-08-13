@@ -1,0 +1,770 @@
+# Factor + strategy configuration
+#
+# Factors: symbols, providers, parameter overrides.
+# Factor code defines required_data, required_symbols, and category
+# in the @factor decorator. Config only specifies runtime choices.
+#
+# Strategies: which factors to combine.
+
+# Research universe — 40 liquid USDⓈ-M perpetual majors, kept in sync with
+# data.symbols.perpetual in default.yaml. Referenced by every factor so the
+# whole library evaluates on the same cross-section (and validate-report
+# derives its fetch plan from it).
+x-symbols: &research_pool
+  - BTCUSDT
+  - ETHUSDT
+  - BNBUSDT
+  - SOLUSDT
+  - XRPUSDT
+  - DOGEUSDT
+  - ADAUSDT
+  - AVAXUSDT
+  - LINKUSDT
+  - DOTUSDT
+  - TRXUSDT
+  - POLUSDT
+  - LTCUSDT
+  - BCHUSDT
+  - UNIUSDT
+  - ATOMUSDT
+  - FILUSDT
+  - NEARUSDT
+  - APTUSDT
+  - ARBUSDT
+  - OPUSDT
+  - INJUSDT
+  - TIAUSDT
+  - SEIUSDT
+  - SUIUSDT
+  - PEPEUSDT
+  - WIFUSDT
+  - SHIBUSDT
+  - MEMEUSDT
+  - FLOKIUSDT
+  - BONKUSDT
+  - ICPUSDT
+  - HBARUSDT
+  - VETUSDT
+  - AAVEUSDT
+  - MKRUSDT
+  - ETCUSDT
+  - XLMUSDT
+  - TONUSDT
+  - JUPUSDT
+
+generation:
+  # Cache-backed generation is UTC-only. The produced panel contains no future
+  # return labels; those remain owned by the separate evaluation panel.
+  timezone: UTC
+  frequency: 1d
+  start: null
+  end: null
+  forward_bias:
+    n_cutoffs: 5
+    tolerance: 1.0e-12
+
+factors:
+  momentum:
+    symbols: *research_pool
+    params:
+      lookback_days: 20
+
+  short_term_reversal:
+    symbols: *research_pool
+    params:
+      lookback_days: 5
+
+  rsi:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 14
+
+  momentum_acceleration:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      long_window_days: 20
+      short_window_days: 5
+
+  breakout_distance:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  realized_vol:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+      annualization: 365
+
+  high_low_range:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  downside_vol:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+      annualization: 365
+
+  parkinson_vol:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+      annualization: 365
+
+  volatility_of_volatility:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      vol_window_days: 20
+      window_days: 60
+
+  volume_ratio:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  turnover:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  dollar_volume:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  volume_price_pressure:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  amihud_illiquidity:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+      epsilon: 1.0e-12
+
+  close_location:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  kline_order_imbalance:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  wick_imbalance:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  intrabar_reversal:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  crypto_gap_risk:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  crypto_tail_risk:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 60
+      quantile: 0.95
+
+  crypto_volume_volatility:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  crypto_return_volume_corr:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  crypto_weekend_activity_ratio:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  binance_mvrv_proxy:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 365
+
+  binance_realized_price_proxy:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 365
+
+  binance_mvrv_proxy_change:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 365
+      change_days: 30
+
+  binance_mvrv_proxy_zscore:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 365
+      zscore_days: 730
+
+  funding_rate_annualized:
+    symbols: *research_pool
+    # Binance funding settles every 8h; the cadence is native-only (the
+    # evaluation_price K-line is fetched at the same 8h grid).
+    frequency: 8h
+    evaluation_price:
+      frequency: 8h
+
+  funding_rate_zscore:
+    symbols: *research_pool
+    # Binance 资金费率天然 8h 结算,标签必须与数据一致(此前 4h 误标,
+    # 会在缺口检测中产生几千条假缺失)。
+    frequencies:
+      funding_rate: 8h
+    evaluation_price:
+      frequency: 8h
+    params:
+      lookback_days: 30
+      epsilon: 1.0e-12
+
+  oi_change_ratio:
+    symbols: *research_pool
+    frequencies:
+      open_interest: 4h
+    evaluation_price:
+      frequency: 4h
+    params:
+      lookback_days: 10
+
+  oi_price_divergence:
+    symbols: *research_pool
+    frequencies:
+      kline: 4h
+      open_interest: 4h
+    params:
+      lookback_days: 20
+
+  basis_latest:
+    symbols: *research_pool
+    frequency: 1d
+    evaluation_price:
+      frequency: 1d
+
+  basis_zscore:
+    symbols: *research_pool
+    frequencies:
+      basis: 1d
+    evaluation_price:
+      frequency: 1d
+    params:
+      lookback_days: 30
+      epsilon: 1.0e-12
+
+  momentum_skip:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      skip_days: 5
+      lookback_days: 20
+
+  momentum_consistency:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  trend_strength:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+      epsilon: 1.0e-12
+
+  moving_average_distance:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  moving_average_crossover:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      short_window_days: 10
+      long_window_days: 30
+
+  donchian_position:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  atr_ratio:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 14
+
+  true_range_ratio:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  garman_klass_vol:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+      annualization: 365
+
+  rogers_satchell_vol:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+      annualization: 365
+
+  return_skewness:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 60
+
+  return_kurtosis:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 60
+
+  range_realized_vol_ratio:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+      epsilon: 1.0e-12
+
+  volatility_regime_ratio:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      short_window_days: 20
+      long_window_days: 60
+      epsilon: 1.0e-12
+
+  volume_momentum:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  volume_regime_ratio:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      short_window_days: 20
+      long_window_days: 60
+      epsilon: 1.0e-12
+
+  volume_shock:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+      epsilon: 1.0e-12
+
+  obv_momentum:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+      epsilon: 1.0e-12
+
+  accumulation_distribution:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+      epsilon: 1.0e-12
+
+  money_flow_index:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 14
+      epsilon: 1.0e-12
+
+  vwap_deviation:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+      epsilon: 1.0e-12
+
+  volume_weighted_return:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+      epsilon: 1.0e-12
+
+  body_to_range:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  upper_wick_ratio:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  lower_wick_ratio:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  candle_efficiency:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+      epsilon: 1.0e-12
+
+  range_expansion:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+      epsilon: 1.0e-12
+
+  candle_body_direction:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  close_location_dispersion:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  range_weighted_return:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+      epsilon: 1.0e-12
+
+  crypto_weekend_return:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  crypto_weekend_weekday_volume_ratio:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+      epsilon: 1.0e-12
+
+  crypto_downside_volume_share:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+      epsilon: 1.0e-12
+
+  crypto_upside_volume_share:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+      epsilon: 1.0e-12
+
+  crypto_return_autocorrelation:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  crypto_jump_intensity:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 60
+      threshold_window_days: 20
+
+  crypto_volume_concentration:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+      epsilon: 1.0e-12
+
+  crypto_price_range_volume_corr:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  momentum_vol_adjusted:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+      epsilon: 1.0e-12
+
+  trend_tstat:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+      epsilon: 1.0e-12
+
+  upside_downside_vol_ratio:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+      epsilon: 1.0e-12
+
+  realized_vol_change:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+      epsilon: 1.0e-12
+
+  return_tail_to_median_ratio:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 60
+      quantile: 0.95
+      epsilon: 1.0e-12
+
+  dollar_volume_momentum:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  liquidity_regime_ratio:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      short_window_days: 20
+      long_window_days: 60
+      epsilon: 1.0e-12
+
+  amihud_illiquidity_change:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+      epsilon: 1.0e-12
+
+  turnover_volatility:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+      epsilon: 1.0e-12
+
+  wick_asymmetry:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+      epsilon: 1.0e-12
+
+  range_autocorrelation:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  close_location_surprise:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  candle_direction_autocorrelation:
+    symbols: *research_pool
+    frequency: 1d
+    params:
+      lookback_days: 20
+
+  cross_asset_relative_momentum:
+    symbols: [[BTCUSDT, ETHUSDT]]
+    frequencies:
+      kline: 1d
+    params:
+      lookback_days: 20
+
+  cross_asset_correlation:
+    symbols: [[BTCUSDT, ETHUSDT]]
+    frequencies:
+      kline: 1d
+    params:
+      lookback_days: 30
+
+  cross_asset_beta:
+    symbols: [[BTCUSDT, ETHUSDT]]
+    frequencies:
+      kline: 1d
+    params:
+      lookback_days: 30
+      epsilon: 1.0e-12
+
+  cross_asset_volatility_ratio:
+    symbols: [[BTCUSDT, ETHUSDT]]
+    frequencies:
+      kline: 1d
+    params:
+      lookback_days: 20
+      epsilon: 1.0e-12
+
+  basis_funding_divergence:
+    symbols: *research_pool
+    frequencies:
+      basis: 1d
+      funding_rate: 8h
+    evaluation_price:
+      frequency: 1d
+    params:
+      lookback_days: 30
+
+  basis_funding_divergence_zscore:
+    symbols: *research_pool
+    frequencies:
+      basis: 1d
+      funding_rate: 8h
+    evaluation_price:
+      frequency: 1d
+    params:
+      lookback_days: 60
+      epsilon: 1.0e-12
+
+# 因子实例层：工厂因子 + 固定参数预设 → 可命名实例。策略只能引用实例。
+# factory 指向 factors 段的工厂因子；params 固化参数；symbols 继承研究池。
+factor_instances:
+  momentum_20d:
+    factory: momentum
+    params: {lookback_days: 20}
+    symbols: *research_pool
+    description: 20 日动量（momentum 默认）
+  momentum_60d:
+    factory: momentum
+    params: {lookback_days: 60}
+    symbols: *research_pool
+    description: 60 日动量
+  momentum_120d:
+    factory: momentum
+    params: {lookback_days: 120}
+    symbols: *research_pool
+    description: 120 日动量
+  short_term_reversal_5d:
+    factory: short_term_reversal
+    params: {lookback_days: 5}
+    symbols: *research_pool
+    description: 5 日反转（short_term_reversal 默认）
+  rsi_14:
+    factory: rsi
+    params: {lookback_days: 14}
+    symbols: *research_pool
+    description: 14 日 RSI（rsi 默认）
+  realized_vol_20d:
+    factory: realized_vol
+    params: {lookback_days: 20}
+    symbols: *research_pool
+    description: 20 日已实现波动率（realized_vol 默认）
+
+strategies:
+  momentum_long_only:
+    used_factors: [momentum_20d]
+  equal_weight_combo:
+    used_factors: [momentum_20d, short_term_reversal_5d]
+  rsi_mean_reversion:
+    used_factors: [rsi_14]
+  momentum_demo:
+    used_factors: [momentum_20d]
+  multi_horizon_trend:
+    used_factors: [momentum_60d, momentum_120d, realized_vol_20d]
+  multi_horizon_trend_long_only:
+    used_factors: [momentum_60d, momentum_120d, realized_vol_20d]
+  momentum_rotation:
+    used_factors: [momentum_60d, momentum_120d, realized_vol_20d]
+
+# Factor groups — named, kind-dispatched factor selectors.
+# Each group has a `kind` that decides how its member factors are resolved:
+#   kind: list      — explicit list of factor names (`factors:`).
+#   kind: category  — all factors in a category (`category:`).
+# Unknown/missing factor names are reported but not fatal: the group still
+# resolves its registered members, and new kinds can be added as resolvers.
+# For big curated sets (e.g. alpha 101/360) list every factor name under
+# `factors:` — once the factors are registered the group resolves fully.
+factor_groups:
+  momentum_study:
+    kind: list
+    description: 动量与反转（实例）
+    factors: [momentum_20d, short_term_reversal_5d, rsi_14]
+
+  crypto_onchain:
+    kind: list
+    description: MVRV 与已实现价格代理
+    factors:
+      - binance_mvrv_proxy
+      - binance_realized_price_proxy
+      - binance_mvrv_proxy_change
+      - binance_mvrv_proxy_zscore
+
+  volatility_study:
+    kind: category
+    description: 波动率分类全部因子
+    category: volatility
+
+  # alpha_101:
+  #   kind: list
+  #   description: WorldQuant Alpha 101 子集
+  #   factors:
+  #     - momentum
+  #     - ...（101 个因子名，注册后自动全量解析）
