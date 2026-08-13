@@ -1140,3 +1140,24 @@ mock/|| true；未 commit（交总控）。
 - autolive 用合成价格源是离线环境的既定行为（同 03 CLI）；网络恢复后
   手动 POST /api/live/start 会用真实 adapter（00 既有代码路径，未改）。
 - 运行 `python run.py` 即得完整演示：四页 200、K线/净值/持仓/评级/六查全真。
+
+---
+
+# 终验（2026-08-13，总控执行）
+
+## 源目录零改动
+- exchangia 源：`sha256sum -c SOURCE_exchangia.sha256` → 299 文件全 OK、0 不一致。
+- sim_platform 源：`find -newermt "2026-08-13 11:20"` → 0 文件在会话开始后被改动。
+
+## 清单逐项（硬指标）
+- 00：pytest 381 passed/0 skipped ≥ 基线 381；requirements.txt 干净 venv 装全且全绿；run.py 起服务（/ 404 监听中、/api/health 200）。✅
+- 01：backfill 小集 12 序列 14,987,885 行进 DuckDB；validate-report missing_pct ≤ 0.10% ≤ 10%；永续 earliest=2019-12-31（源端最早，2019-09-26 子项 BLOCKED 有 curl 取证）。✅（1 子项源端受阻）
+- 02：imports 双文件 2s 热注册（<10s）、compute 出数；坏 MD 报「规则12 | 字段[数学定义]」；删 impl 不注册；删 MD 注销；factors list 分页/过滤。✅
+- 03：evaluate/check MOM-001 PASS；backtest DEM-001 出 Sharpe/MaxDD；live --ticks 5 打印 equity=99990 无异常退出；超资金拒单、反转拆单、testnet 无 key exit=1 不降级。✅
+- 04：rating MOM-001 出 S 级真实指标；leaderboard/metrics/qualification/相关性矩阵真实返回；六查批次 PASS 并导出 md/json；空数据 insufficient、前视因子 FAIL（红→绿齐）。✅
+- 05：四页 200；/api/state、klines、registry、rating、leaderboard 全真数据；UI 触发六查批次 PASS（run 47e0e47c569c）；四页与源差异恰为 web/API_DIFF.md 记录的 7 处（3 API 路径避让 + 4 处隐藏 AI 工厂入口）；停 /api/state 前端显示异常而非假数据（无头 Chrome 证据）。✅
+
+## 环境备忘
+- 依赖新增 2 项（05）：python-multipart、openpyxl（pyproject + requirements 双份）。
+- DuckDB 单写者：run.py 服务进程持有 data/cache.duckdb 时，CLI 评估类命令会撞锁——先停服务再跑 CLI。
+- 全量回填（40 永续+现货 2019→now）命令就绪：`superplatform backfill --all`（约 1.5 亿行/数小时，断点续跑，见 tools/backfill.py docstring）。
