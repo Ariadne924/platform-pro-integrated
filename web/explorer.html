@@ -1,0 +1,1767 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>因子与策略探索 — CryptoPaperLab</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+  <style>
+    :root {
+      --bg: #0b0e11;
+      --panel: #151a20;
+      --panel-2: #1e2329;
+      --border: #2b3139;
+      --text: #eaecef;
+      --text-2: #848e9c;
+      --accent: #f0b90b;
+      --up: #0ecb81;
+      --down: #f6465d;
+      --warn: #f0b90b;
+      --idle: #5e6773;
+      --hover: #2b3139;
+      --input-bg: #0b0e11;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; }
+    button, input, select { font-family: inherit; color: inherit; }
+    button { cursor: pointer; border: none; background: var(--panel-2); padding: 6px 10px; border-radius: 4px; font-size: 12px; color: var(--text); }
+    button:hover { background: var(--hover); }
+    input, select { background: var(--input-bg); border: 1px solid var(--border); padding: 6px 8px; border-radius: 4px; outline: none; color: var(--text); font-size: 12px; }
+    input:focus, select:focus { border-color: var(--accent); }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* Header */
+    header {
+      height: 48px; background: var(--panel); border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between; padding: 0 16px;
+      position: sticky; top: 0; z-index: 100;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px; white-space: nowrap; }
+    .brand small { color: var(--text-2); font-size: 11px; font-weight: 400; line-height: 1.2; }
+    /* 头顶时间对照：UTC 与 SIN(+8)，秒级刷新 */
+    .header-clocks { flex: 1; display: flex; justify-content: center; gap: 22px; font-size: 12px; color: var(--text-2); }
+    .header-clocks .clock b { color: var(--accent); margin-right: 4px; }
+    .header-clocks .clock .clock-mono { color: var(--text); font-size: 13px; letter-spacing: .5px; font-family: var(--mono); }
+    .header-clocks .clock small { color: var(--text-2); }
+    .top-nav { display: flex; gap: 4px; align-items: center; }
+    .top-nav a, .top-nav button {
+      padding: 6px 12px; border-radius: 4px; font-size: 12px;
+      background: transparent; color: var(--text-2); border: 1px solid transparent; cursor: pointer;
+      display: inline-flex; align-items: center; gap: 6px; font-weight: 500;
+    }
+    .top-nav a:hover, .top-nav button:hover { color: var(--text); background: var(--panel-2); text-decoration: none; }
+    .top-nav .active { color: var(--accent); background: rgba(240,185,11,0.08); border-color: rgba(240,185,11,0.3); }
+    .top-nav .accent-btn {
+      background: var(--accent); color: #0b0e11; font-weight: 600;
+    }
+    .top-nav .accent-btn:hover { filter: brightness(1.05); }
+
+    /* Layout: left list / right preview */
+    .app { height: calc(100vh - 48px); display: grid; grid-template-columns: 520px 6px 1fr; background: var(--border); }
+    .app > .splitter { grid-column: 2; cursor: col-resize; background: var(--border); position: relative; }
+    .app > .splitter:hover { background: var(--accent); }
+
+    .sidebar { background: var(--panel); display: flex; flex-direction: column; min-height: 0; border-right: 0; }
+    .side-tabs {
+      display: flex; border-bottom: 1px solid var(--border); background: var(--panel-2);
+    }
+    .side-tab {
+      flex: 1; padding: 10px 8px; text-align: center; cursor: pointer;
+      color: var(--text-2); font-size: 12px; border-bottom: 2px solid transparent;
+      white-space: nowrap;
+    }
+    .side-tab:hover { color: var(--text); }
+    .side-tab.active { color: var(--accent); border-bottom-color: var(--accent); background: var(--panel); }
+    .side-tab .count { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px; font-size: 10px; line-height: 16px; background: var(--panel); border-radius: 8px; color: var(--text-2); }
+    .side-tab.active .count { background: rgba(240,185,11,0.15); color: var(--accent); }
+
+    .side-search { padding: 10px 12px; border-bottom: 1px solid var(--border); display: flex; gap: 8px; }
+    .side-search input { flex: 1; min-width: 0; }
+    .side-search select { width: 132px; flex-shrink: 0; }
+
+    /* 复选与导出工具条 */
+    .sel-bar {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 12px; border-bottom: 1px solid var(--border);
+      font-size: 11px; color: var(--text-2);
+    }
+    .sel-bar label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+    .sel-bar .sel-count { margin-left: auto; font-family: var(--mono); }
+    .sel-bar .btn-export { background: var(--accent); color: #0b0e11; font-weight: 600; padding: 4px 10px; }
+    .sel-bar .btn-export:hover { filter: brightness(1.05); }
+    .sel-bar .btn-export:disabled { background: var(--panel-2); color: var(--idle); cursor: not-allowed; }
+    .side-item .sel-box { flex-shrink: 0; margin: 2px 0 0; accent-color: var(--accent); cursor: pointer; }
+
+    .cat-legend {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px;
+      padding: 5px 12px; border-bottom: 1px solid var(--border);
+      font-size: 10px; color: var(--text-2);
+    }
+    .cat-legend .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; }
+    .cat-legend .dot.cat-momentum       { background: #4c9aff; }
+    .cat-legend .dot.cat-volatility     { background: #a371f7; }
+    .cat-legend .dot.cat-volume         { background: #39c5cf; }
+    .cat-legend .dot.cat-microstructure { background: #f0883e; }
+    .cat-legend .dot.cat-basis          { background: #f47067; }
+    .cat-legend .dot.cat-other          { background: #8b949e; }
+
+    .side-list { flex: 1; display: flex; min-height: 0; padding: 0; overflow: hidden; }
+    .side-col { flex: 1; min-width: 0; overflow-y: auto; padding: 0 0 6px; }
+    .side-col + .side-col { border-left: 1px solid var(--border); }
+    .col-head {
+      position: sticky; top: 0; z-index: 10;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 7px 12px; background: var(--panel-2);
+      border-bottom: 1px solid var(--border);
+      font-size: 11px; font-weight: 600; color: var(--text-2); letter-spacing: 0.4px;
+    }
+    .col-head .count {
+      display: inline-block; min-width: 18px; padding: 0 5px;
+      font-size: 10px; line-height: 16px; text-align: center;
+      background: var(--panel); border-radius: 8px; color: var(--text-2);
+    }
+    .col-empty { padding: 24px 12px; text-align: center; color: var(--text-2); font-size: 11px; }
+    .side-item {
+      padding: 9px 14px; cursor: pointer; border-left: 3px solid transparent;
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .side-item:hover { background: var(--panel-2); }
+    .side-item.selected { background: rgba(240,185,11,0.08); border-left-color: var(--accent); }
+    .side-item .row1 { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; }
+    .side-item .id { font-family: var(--mono); color: var(--accent); font-size: 11px; }
+    .side-item .name { color: var(--text); }
+    .side-item .row2 { display: flex; gap: 8px; font-size: 11px; color: var(--text-2); flex-wrap: wrap; align-items: center; }
+    .side-item .row2 .cat { font-family: var(--mono); }
+    .side-item.invalid { opacity: 0.7; }
+    .side-item.invalid .name { color: var(--down); }
+
+    .badge {
+      display: inline-block; padding: 1px 7px; border-radius: 9px;
+      font-size: 10px; line-height: 14px; font-weight: 600; letter-spacing: 0.2px;
+      border: 1px solid transparent;
+    }
+    .badge.active   { background: rgba(14,203,129,0.12); color: var(--up); border-color: rgba(14,203,129,0.35); }
+    .badge.draft    { background: rgba(240,185,11,0.10); color: var(--warn); border-color: rgba(240,185,11,0.30); }
+    .badge.deprecated { background: rgba(132,142,156,0.12); color: var(--idle); border-color: rgba(132,142,156,0.30); }
+    .badge.invalid  { background: rgba(246,70,93,0.12); color: var(--down); border-color: rgba(246,70,93,0.35); }
+    .badge.author   { background: rgba(94,129,172,0.14); color: #88a5c8; border-color: rgba(94,129,172,0.35); font-weight: 500; }
+    .badge.cat-momentum       { background: rgba(76,154,255,0.12); color: #4c9aff; border-color: rgba(76,154,255,0.35); }
+    .badge.cat-volatility     { background: rgba(163,113,247,0.12); color: #a371f7; border-color: rgba(163,113,247,0.35); }
+    .badge.cat-volume         { background: rgba(57,197,207,0.12); color: #39c5cf; border-color: rgba(57,197,207,0.35); }
+    .badge.cat-microstructure { background: rgba(240,136,62,0.12); color: #f0883e; border-color: rgba(240,136,62,0.35); }
+    .badge.cat-basis          { background: rgba(244,112,103,0.12); color: #f47067; border-color: rgba(244,112,103,0.35); }
+    .badge.cat-other          { background: rgba(139,148,158,0.12); color: #8b949e; border-color: rgba(139,148,158,0.30); }
+    /* 因子检查状态徽章（试点）：未检查灰 / 已检查绿 / 文件已变更黄 / 检查中蓝 */
+    .badge.chk-unchecked { background: rgba(132,142,156,0.12); color: var(--idle); border-color: rgba(132,142,156,0.30); }
+    .badge.chk-checked   { background: rgba(14,203,129,0.12); color: var(--up); border-color: rgba(14,203,129,0.35); }
+    .badge.chk-changed   { background: rgba(240,185,11,0.12); color: var(--warn); border-color: rgba(240,185,11,0.40); }
+    .badge.chk-checking  { background: rgba(76,154,255,0.12); color: #4c9aff; border-color: rgba(76,154,255,0.35); }
+
+    /* 评估指标面板：上下两块 + 加载转圈 */
+    .eval-block { border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; margin-bottom: 14px; background: var(--panel-2); }
+    .eval-block h4 { margin: 0 0 4px; font-size: 12px; color: var(--text); }
+    .eval-block .eval-scope { font-size: 11px; color: var(--warn); margin-bottom: 8px; }
+    .eval-spin { color: var(--text-2); font-size: 12px; padding: 10px 0; }
+    .eval-spin::before { content: '⏳ '; }
+    .eval-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+    .eval-kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px 14px; font-size: 12px; font-family: var(--mono); }
+    .eval-kv .k { color: var(--text-2); }
+    .eval-kv .v { color: var(--text); }
+
+    .side-empty { padding: 30px 16px; text-align: center; color: var(--text-2); font-size: 12px; }
+
+    /* Preview pane */
+    .preview { background: var(--panel); display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
+    .preview-head {
+      padding: 14px 18px; border-bottom: 1px solid var(--border); background: var(--panel-2);
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .preview-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .preview-title .pid { font-family: var(--mono); color: var(--accent); font-weight: 600; font-size: 14px; }
+    .preview-title .pname { font-weight: 600; font-size: 14px; }
+    .preview-title .badges { display: flex; gap: 6px; }
+    .preview-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    .preview-actions .btn-go-main { background: var(--accent); color: #0b0e11; font-weight: 600; padding: 6px 12px; }
+    .preview-actions .btn-go-main:hover { filter: brightness(1.05); }
+    .preview-actions .link-btn {
+      display: inline-flex; align-items: center; padding: 6px 10px;
+      border-radius: 4px; font-size: 12px; color: var(--text); background: var(--panel-2); text-decoration: none;
+    }
+    .preview-actions .link-btn:hover { background: var(--hover); }
+    .preview-meta { font-size: 11px; color: var(--text-2); display: flex; gap: 14px; flex-wrap: wrap; font-family: var(--mono); }
+    .preview-meta span b { color: var(--text); font-weight: 600; }
+
+    .preview-tabs {
+      display: flex; gap: 0; border-bottom: 1px solid var(--border); background: var(--panel-2);
+      padding: 0 12px;
+    }
+    .preview-tab {
+      padding: 8px 14px; cursor: pointer; color: var(--text-2); font-size: 12px;
+      border-bottom: 2px solid transparent;
+    }
+    .preview-tab:hover { color: var(--text); }
+    .preview-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+    .preview-body { flex: 1; overflow: auto; padding: 16px 18px; }
+    .preview-body.empty {
+      display: flex; align-items: center; justify-content: center;
+      color: var(--text-2); font-size: 13px; text-align: center;
+    }
+
+    /* Sections / props */
+    .sec { margin-bottom: 16px; }
+    .sec h4 {
+      margin: 0 0 8px; font-size: 11px; text-transform: uppercase;
+      color: var(--text-2); letter-spacing: 0.6px; font-weight: 600;
+    }
+    .kv { display: grid; grid-template-columns: 120px 1fr; gap: 6px 12px; font-size: 12px; }
+    .kv .k { color: var(--text-2); }
+    .kv .v { color: var(--text); font-family: var(--mono); word-break: break-all; }
+    .err-list { display: flex; flex-direction: column; gap: 4px; }
+    .err-list .e {
+      padding: 6px 10px; background: rgba(246,70,93,0.08); border: 1px solid rgba(246,70,93,0.3);
+      border-radius: 4px; font-size: 12px; color: var(--down); font-family: var(--mono);
+    }
+    .err-list .e b { color: var(--warn); margin-right: 6px; }
+
+    .doc-block {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+      padding: 14px 16px;
+      font-family: var(--mono); font-size: 12px; line-height: 1.65; color: var(--text);
+      white-space: pre-wrap; word-break: break-word; max-height: 100%;
+      overflow: auto;
+    }
+    .err-box { color: var(--down); padding: 20px; text-align: center; font-size: 13px; }
+
+    /* 评级（rating）面板：综合评级大徽章 / 分标的小表格 / 提示 */
+    .grade-badge {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 46px; height: 46px; border-radius: 8px;
+      font-size: 24px; font-weight: 700; font-family: var(--mono);
+    }
+    .grade-s, .grade-a { background: rgba(240,185,11,0.14); color: var(--accent); border: 1px solid rgba(240,185,11,0.45); }
+    .grade-b { background: rgba(14,203,129,0.12); color: var(--up); border: 1px solid rgba(14,203,129,0.35); }
+    .grade-c { background: rgba(240,185,11,0.08); color: var(--warn); border: 1px solid rgba(240,185,11,0.30); }
+    .grade-d { background: rgba(246,70,93,0.10); color: var(--down); border: 1px solid rgba(246,70,93,0.35); }
+    .grade-na { background: rgba(132,142,156,0.12); color: var(--idle); border: 1px solid rgba(132,142,156,0.30); }
+    .rating-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+    .rating-head .grade-meta { font-size: 11px; color: var(--text-2); line-height: 1.7; }
+    .rating-table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+    .rating-table th, .rating-table td { padding: 4px 8px; border-bottom: 1px solid var(--border); text-align: right; }
+    .rating-table th { color: var(--text-2); font-weight: 600; font-size: 11px; }
+    .rating-table td:first-child, .rating-table th:first-child { text-align: left; color: var(--accent); }
+    .rating-note { color: var(--warn); font-size: 12px; padding: 3px 0; }
+    .num-down { color: var(--down); }
+    .rating-win { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; font-size: 12px; color: var(--text-2); }
+    .rating-win input { width: 72px; }
+    .rating-win .rating-win-note { color: var(--idle); }
+    .rating-win .rating-win-err { color: var(--down); }
+
+    /* 评级榜（leaderboard）：左侧控制面板 + 排行列表 + 右侧图表 */
+    .lb-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+    .lb-controls { padding: 10px 12px; border-bottom: 1px solid var(--border); display: flex; gap: 8px; align-items: center; }
+    .lb-controls select { flex: 1; min-width: 0; }
+    .lb-controls .btn-lb-compute { background: var(--accent); color: #0b0e11; font-weight: 600; white-space: nowrap; }
+    .lb-controls .btn-lb-compute:hover { filter: brightness(1.05); }
+    .lb-controls .btn-lb-compute:disabled { background: var(--panel-2); color: var(--idle); cursor: not-allowed; }
+    .lb-subset-bar { padding: 5px 12px; border-bottom: 1px solid var(--border); font-size: 11px; color: var(--warn); display: flex; align-items: center; gap: 8px; }
+    .lb-subset-bar a { cursor: pointer; }
+    .lb-progress { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+    .lb-progress-bar { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
+    .lb-progress-fill { height: 100%; background: var(--accent); width: 0%; transition: width .2s; }
+    .lb-progress-text { font-size: 11px; color: var(--text-2); margin-top: 5px; font-family: var(--mono); }
+    .lb-list { flex: 1; overflow-y: auto; padding: 4px 0 8px; min-height: 0; }
+    .lb-row { display: flex; align-items: center; gap: 8px; padding: 6px 12px; cursor: pointer; font-size: 12px; }
+    .lb-row:hover { background: var(--panel-2); }
+    .lb-row.dim { opacity: 0.45; cursor: default; }
+    .lb-rank { width: 26px; text-align: right; font-family: var(--mono); color: var(--text-2); flex-shrink: 0; }
+    .lb-rank.top { color: var(--accent); font-weight: 700; }
+    .lb-fid { font-family: var(--mono); color: var(--accent); font-size: 11px; flex-shrink: 0; }
+    .lb-name { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+    .lb-val { font-family: var(--mono); flex-shrink: 0; }
+    .grade-mini {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 20px; height: 20px; border-radius: 4px; flex-shrink: 0;
+      font-size: 11px; font-weight: 700; font-family: var(--mono);
+    }
+    .lb-chart { width: 100%; height: 70vh; }
+    .lb-summary { padding: 10px 4px 0; font-size: 12px; color: var(--text-2); font-family: var(--mono); }
+    .lb-hint { padding: 40px 20px; text-align: center; color: var(--text-2); font-size: 13px; line-height: 2; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span>📊 CryptoPaperLab</span>
+      <small>因子与策略探索</small>
+    </div>
+    <div class="header-clocks" aria-label="时间对照">
+      <span class="clock"><b>UTC</b> <span class="clock-mono" id="clock-utc">—</span></span>
+      <span class="clock"><b>SIN</b> <span class="clock-mono" id="clock-sin">—</span> <small>(+8)</small></span>
+    </div>
+    <nav class="top-nav">
+      <a href="/" target="_self">🏠 主项目</a>
+      <a href="/explorer" class="active">🔍 探索</a>
+      <a href="/bias-control.html">📚 因子库</a>
+      <button class="accent-btn" onclick="goStrategyFactory()" title="打开策略工厂面板" style="display:none">⚙ 策略工厂</button>
+      <a href="/about.html" target="_self">ℹ 关于</a>
+    </nav>
+  </header>
+
+  <div class="app">
+    <aside class="sidebar">
+      <div class="side-tabs" id="side-tabs">
+        <div class="side-tab active" data-kind="factors">因子 <span class="count" id="cnt-factors">0</span></div>
+        <div class="side-tab" data-kind="strategies">策略 <span class="count" id="cnt-strategies">0</span></div>
+        <div class="side-tab" data-kind="pystrategies">Py策略 <span class="count" id="cnt-pystrategies">0</span></div>
+        <div class="side-tab" data-kind="leaderboard">评级榜 <span class="count" id="cnt-leaderboard">0</span></div>
+      </div>
+      <div class="side-search">
+        <input id="search" type="search" placeholder="按 ID / 名称 / 分类筛选…" autocomplete="off">
+        <select id="author-filter" title="按提交人筛选"><option value="">全部提交人</option></select>
+      </div>
+      <div class="sel-bar">
+        <label title="选中/取消当前筛选结果"><input type="checkbox" id="sel-all"> 全选</label>
+        <button id="sel-none" title="清空当前 Tab 的全部勾选">清空</button>
+        <span class="sel-count" id="sel-count">已选 0</span>
+        <button id="btn-compare-lb" disabled title="把勾选的因子作为子集切到评级榜进行对比计算">⇄ 对比勾选</button>
+        <button class="btn-export" id="btn-export-csv" disabled>导出 CSV</button>
+      </div>
+      <div class="cat-legend" id="cat-legend">
+        <span><i class="dot cat-momentum"></i>动量/反转</span>
+        <span><i class="dot cat-volatility"></i>波动率</span>
+        <span><i class="dot cat-volume"></i>成交量/流动性</span>
+        <span><i class="dot cat-microstructure"></i>微观结构</span>
+        <span><i class="dot cat-basis"></i>数字资产特有</span>
+        <span><i class="dot cat-other"></i>特别保留</span>
+      </div>
+      <div class="side-list" id="side-list">
+        <div class="side-col">
+          <div class="col-head"><span>待审查</span><span class="count" id="cnt-pending">0</span></div>
+          <div id="col-pending"><div class="col-empty">加载中…</div></div>
+        </div>
+        <div class="side-col">
+          <div class="col-head"><span>已提交</span><span class="count" id="cnt-submitted">0</span></div>
+          <div id="col-submitted"><div class="col-empty">加载中…</div></div>
+        </div>
+      </div>
+    </aside>
+
+    <div class="splitter" id="splitter"></div>
+
+    <section class="preview" id="preview">
+      <div class="preview-head" id="preview-head" style="display:none">
+        <div class="preview-title">
+          <span class="pid" id="p-id"></span>
+          <span class="pname" id="p-name"></span>
+          <span class="badges" id="p-badges"></span>
+          <span class="badges" id="p-check-badge"></span>
+        </div>
+        <div class="preview-actions">
+          <button class="btn-go-main" onclick="goMainWithItem()">↗ 跳转主项目</button>
+          <button id="btn-factory" onclick="goStrategyFactory()" style="display:none">⚙ 策略工厂</button>
+          <a href="/about.html" target="_self" class="link-btn">ℹ 关于</a>
+        </div>
+        <div class="preview-meta" id="p-meta"></div>
+      </div>
+
+      <div class="preview-tabs" id="preview-tabs" style="display:none">
+        <div class="preview-tab active" data-pane="meta">概览</div>
+        <div class="preview-tab" data-pane="doc">文档 / 源码</div>
+        <div class="preview-tab" data-pane="rating">评级</div>
+        <div class="preview-tab" data-pane="eval">评估指标</div>
+      </div>
+
+      <div class="preview-body empty" id="preview-body">
+        选择左侧条目以预览详情
+      </div>
+    </section>
+  </div>
+
+  <script>
+    // -----------------------------------------------------------
+    // State
+    // -----------------------------------------------------------
+    const state = {
+      kind: 'factors',                  // 当前 tab
+      items: { factors: [], strategies: [], pystrategies: [] },
+      selectedId: null,                  // {kind, id}
+      pane: 'meta',
+      query: '',
+      author: '',                        // 提交人筛选：''=全部，'__unsigned__'=未署名
+      checked: { factors: new Set(), strategies: new Set(), pystrategies: new Set() },  // 复选框勾选（按 Tab 分桶）
+      // 评级榜状态：entries=榜单条目（缓存全量清单+已计算指标合并）；metric=当前排序指标；
+      // subset=对比勾选的因子子集（null=全量）；computing/progress=批量计算进度
+      leaderboard: { entries: [], metric: 'rank_ic_mean', subset: null, computing: false, progress: { done: 0, total: 0, startedAt: 0 } },
+      // 因子检查状态（试点）：factor_id -> {status, source, attested_by, ...}，批量端点拉取
+      checkStatus: {},
+    };
+
+    function fmtKind(k) {
+      return ({factors: '因子', strategies: '策略', pystrategies: 'Py策略'})[k] || k;
+    }
+
+    // 跳主项目并把当前选中的 (kind, id) 暴露给主页面，便于它自动定位 Tab
+    function goMainWithItem() {
+      const sel = state.selectedId;
+      if (!sel) { window.open('/', '_self'); return; }
+      // 通过 sessionStorage 中转，主项目可选择性读取（不强依赖）
+      try { sessionStorage.setItem('admin_pending_focus', JSON.stringify(sel)); } catch (e) {}
+      window.open('/', '_self');
+    }
+
+    function goStrategyFactory() {
+      // 主项目页面的「策略工厂」是顶部导航的某个 tab/面板；这里提供降级 URL
+      window.open('/', '_self');
+      // 主项目脚本可监听 admin_pending_focus 以自动开启对应面板
+      try { sessionStorage.setItem('admin_open_factory', '1'); } catch (e) {}
+    }
+
+    // -----------------------------------------------------------
+    // API
+    // -----------------------------------------------------------
+    async function fetchOverview() {
+      const r = await fetch('/api/admin/overview');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }
+    async function fetchMd(kind, id) {
+      const path = ({
+        factors:    `/api/admin/factors/${encodeURIComponent(id)}/md`,
+        strategies: `/api/admin/strategies/${encodeURIComponent(id)}/md`,
+        pystrategies: `/api/admin/pystrategies/${encodeURIComponent(id)}/source`,
+      })[kind];
+      const r = await fetch(path);
+      if (!r.ok) {
+        const t = await r.text();
+        throw new Error(`HTTP ${r.status}: ${t}`);
+      }
+      return r.json();
+    }
+    async function fetchImpl(kind, id) {
+      const path = kind === 'factors'
+        ? `/api/admin/factors/${encodeURIComponent(id)}/impl`
+        : `/api/admin/strategies/${encodeURIComponent(id)}/impl`;
+      const r = await fetch(path);
+      if (!r.ok) {
+        const t = await r.text();
+        throw new Error(`HTTP ${r.status}: ${t}`);
+      }
+      return r.json();
+    }
+
+    // -----------------------------------------------------------
+    // 因子检查状态（试点）
+    // -----------------------------------------------------------
+    async function refreshCheckStatus() {
+      try {
+        const r = await fetch('/api/factors/check-status');
+        if (!r.ok) return;
+        const data = await r.json();
+        state.checkStatus = data.statuses || {};
+        renderSidebar();
+        renderHeadCheckBadge();
+      } catch (e) { /* 状态端点不可用时静默降级：不显示徽章 */ }
+    }
+
+    // 单因子状态刷新（attest / run-check 后调用）
+    async function refreshOneCheckStatus(id) {
+      try {
+        const r = await fetch(`/api/factors/${encodeURIComponent(id)}/check-status`);
+        if (!r.ok) return null;
+        const row = await r.json();
+        state.checkStatus[id] = row;
+        renderSidebar();
+        renderHeadCheckBadge();
+        return row;
+      } catch (e) { return null; }
+    }
+
+    // 检查状态徽章文案与样式：未检查灰 / 已检查·人工@姓名 / 已检查·自动 / 已检查·文件已变更黄 / 检查中蓝
+    function checkBadgeInfo(row) {
+      if (!row || !row.status || row.status === 'unchecked') return ['chk-unchecked', '未检查'];
+      if (row.status === 'checking') return ['chk-checking', '检查中…'];
+      if (row.status === 'checked') {
+        if (row.hash_changed) return ['chk-changed', '已检查·文件已变更'];
+        if (row.source === 'manual') return ['chk-checked', `已检查·人工@${row.attested_by || '?'}`];
+        return ['chk-checked', '已检查·自动'];
+      }
+      return ['chk-unchecked', String(row.status)];
+    }
+    function checkBadgeHtml(id) {
+      const [cls, label] = checkBadgeInfo(state.checkStatus[id]);
+      return `<span class="badge ${cls}" title="因子检查状态（与 draft/active 正交）">${escapeHtml(label)}</span>`;
+    }
+    function renderHeadCheckBadge() {
+      const sel = state.selectedId;
+      const el = document.getElementById('p-check-badge');
+      if (!el) return;
+      if (!sel || sel.kind !== 'factors') { el.innerHTML = ''; return; }
+      el.innerHTML = checkBadgeHtml(sel.id);
+    }
+
+    // -----------------------------------------------------------
+    // Render: sidebar list
+    // -----------------------------------------------------------
+    function itemLabel(it, kind) {
+      if (kind === 'factors')    return it.factor_id || '(invalid)';
+      if (kind === 'strategies') return it.strategy_id;
+      return it.strategy_id;
+    }
+    function itemName(it, kind) {
+      const n = it.name || '(no-name)';
+      if (kind === 'factors' && !it.registered) return n + ' — 校验失败';
+      return n;
+    }
+    function itemMeta(it, kind) {
+      if (kind === 'factors') {
+        const bits = [];
+        if (it.category) bits.push(it.category);
+        if (it.frequency) bits.push(it.frequency);
+        if (it.lookback_bars) bits.push(`lb=${it.lookback_bars}`);
+        return bits.join(' · ');
+      }
+      if (kind === 'strategies') {
+        const bits = [];
+        if (Array.isArray(it.symbols)) bits.push(it.symbols.join(','));
+        if (it.max_leverage != null) bits.push(`lev=${it.max_leverage}`);
+        return bits.join(' · ');
+      }
+      // pystrategies
+      const bits = [];
+      if (Array.isArray(it.symbols)) bits.push(it.symbols.join(','));
+      if (it.max_leverage != null) bits.push(`lev=${it.max_leverage}`);
+      return bits.join(' · ');
+    }
+
+    // 因子分类徽章：category -> [css 类, 中文标签]，未识别的值一律归入「特别保留」
+    function factorCatInfo(cat) {
+      switch (String(cat || '').toLowerCase()) {
+        case 'momentum':
+        case 'reversal':       return ['cat-momentum', '动量/反转'];
+        case 'volatility':     return ['cat-volatility', '波动率'];
+        case 'volume':         return ['cat-volume', '成交量/流动性'];
+        case 'microstructure': return ['cat-microstructure', '微观结构'];
+        case 'basis_funding':  return ['cat-basis', '数字资产特有'];
+        default:               return ['cat-other', '特别保留'];
+      }
+    }
+    function factorCatBadge(it) {
+      const raw = it.category == null ? '' : String(it.category);
+      const [cls, label] = factorCatInfo(raw);
+      return `<span class="badge ${cls}" title="${escapeAttr(raw || '(empty)')}">${escapeHtml(label)}</span>`;
+    }
+
+    // author 归一化：null/缺失/空串 -> '__unsigned__'
+    function authorKeyOf(it) {
+      const a = it.author;
+      return (a == null || a === '') ? '__unsigned__' : String(a);
+    }
+    function authorLabelOf(it) {
+      const a = it.author;
+      return (a == null || a === '') ? '-' : String(a);
+    }
+
+    // 待审查：draft 或校验失败（registered===false / status=='invalid' / 其他非已提交状态）
+    function isPendingItem(it) {
+      const st = it.status || 'invalid';
+      if (it.registered === false) return true;
+      return !(st === 'active' || st === 'deprecated');
+    }
+
+    // 重建提交人下拉选项（当前 Tab 聚合去重），尽量保留原选中
+    function rebuildAuthorOptions() {
+      const sel = document.getElementById('author-filter');
+      const items = state.items[state.kind] || [];
+      const seen = new Map();  // key -> 展示名
+      items.forEach(it => {
+        const k = authorKeyOf(it);
+        if (!seen.has(k)) seen.set(k, k === '__unsigned__' ? '(未署名)' : k);
+      });
+      const entries = [...seen.entries()].sort((a, b) => {
+        if (a[0] === '__unsigned__') return 1;
+        if (b[0] === '__unsigned__') return -1;
+        return a[1].localeCompare(b[1], 'zh');
+      });
+      sel.innerHTML = '<option value="">全部提交人</option>' +
+        entries.map(([k, label]) => `<option value="${escapeAttr(k)}">${escapeHtml(label)}</option>`).join('');
+      if (state.author && seen.has(state.author)) {
+        sel.value = state.author;
+      } else {
+        state.author = '';
+        sel.value = '';
+      }
+    }
+
+    // 加载失败后 side-list 可能被整段覆盖，渲染前确保两栏骨架存在
+    function ensureCols() {
+      const list = document.getElementById('side-list');
+      if (!list.querySelector('.side-col')) {
+        list.innerHTML = `
+          <div class="side-col">
+            <div class="col-head"><span>待审查</span><span class="count" id="cnt-pending">0</span></div>
+            <div id="col-pending"></div>
+          </div>
+          <div class="side-col">
+            <div class="col-head"><span>已提交</span><span class="count" id="cnt-submitted">0</span></div>
+            <div id="col-submitted"></div>
+          </div>`;
+      }
+    }
+
+    function renderSidebar() {
+      // 评级榜模式：隐藏复选/导出工具条与分类图例，改渲染榜单面板
+      const isLb = state.kind === 'leaderboard';
+      document.querySelector('.sel-bar').style.display = isLb ? 'none' : '';
+      document.querySelector('.side-search').style.display = isLb ? 'none' : '';
+      document.getElementById('cnt-leaderboard').textContent =
+        state.leaderboard.entries.filter(e => e.computed).length;
+      if (isLb) {
+        renderLeaderboardSidebar();
+        return;
+      }
+      ensureCols();
+      const items = state.items[state.kind] || [];
+      const q = state.query.trim().toLowerCase();
+      let filtered = !q ? items : items.filter(it => {
+        const s = JSON.stringify(it).toLowerCase();
+        return s.includes(q);
+      });
+      if (state.author) {
+        filtered = filtered.filter(it => authorKeyOf(it) === state.author);
+      }
+      state._filtered = filtered;  // 供全选/导出使用
+
+      document.getElementById('cnt-factors').textContent    = state.items.factors.length;
+      document.getElementById('cnt-strategies').textContent = state.items.strategies.length;
+      document.getElementById('cnt-pystrategies').textContent = state.items.pystrategies.length;
+
+      // 分类图例仅因子 Tab 显示
+      document.getElementById('cat-legend').style.display = state.kind === 'factors' ? '' : 'none';
+
+      const pending = filtered.filter(isPendingItem);
+      const submitted = filtered.filter(it => !isPendingItem(it));
+      document.getElementById('cnt-pending').textContent = pending.length;
+      document.getElementById('cnt-submitted').textContent = submitted.length;
+
+      const renderItem = (it) => {
+        const id = itemLabel(it, state.kind);
+        const name = itemName(it, state.kind);
+        const meta = itemMeta(it, state.kind);
+        const status = it.status || 'invalid';
+        const isInv = it.registered === false || status === 'invalid';
+        const selected = state.selectedId && state.selectedId.kind === state.kind && state.selectedId.id === id ? 'selected' : '';
+        const invCls = isInv ? 'invalid' : '';
+        const isChecked = state.checked[state.kind].has(id) ? 'checked' : '';
+        return `
+          <div class="side-item ${selected} ${invCls}" data-id="${escapeAttr(id)}">
+            <div class="row1">
+              <input type="checkbox" class="sel-box" data-id="${escapeAttr(id)}" ${isChecked} title="勾选以加入导出清单">
+              <span class="name">${escapeHtml(name)}</span>
+              <span class="badge ${status}">${escapeHtml(status)}</span>
+              ${state.kind === 'factors' ? factorCatBadge(it) : ''}
+              ${state.kind === 'factors' && !isInv ? checkBadgeHtml(id) : ''}
+              <span class="badge author" title="提交人">${escapeHtml(authorLabelOf(it))}</span>
+            </div>
+            <div class="row2">
+              <span class="id">${escapeHtml(id)}</span>
+              ${meta ? `<span class="cat">${escapeHtml(meta)}</span>` : ''}
+            </div>
+          </div>`;
+      };
+
+      const emptyMsg = items.length === 0 ? '暂无数据' : (filtered.length === 0 ? '没有匹配项' : '（空）');
+      document.getElementById('col-pending').innerHTML = pending.length
+        ? pending.map(renderItem).join('')
+        : `<div class="col-empty">${emptyMsg}</div>`;
+      document.getElementById('col-submitted').innerHTML = submitted.length
+        ? submitted.map(renderItem).join('')
+        : `<div class="col-empty">${emptyMsg}</div>`;
+
+      document.getElementById('side-list').querySelectorAll('.side-item').forEach(el => {
+        el.addEventListener('click', () => onSelect(state.kind, el.dataset.id));
+      });
+      // 复选框：只改勾选状态，不触发条目预览
+      document.getElementById('side-list').querySelectorAll('.sel-box').forEach(box => {
+        box.addEventListener('click', (e) => e.stopPropagation());
+        box.addEventListener('change', () => {
+          const bucket = state.checked[state.kind];
+          if (box.checked) bucket.add(box.dataset.id); else bucket.delete(box.dataset.id);
+          updateSelBar(filtered);
+        });
+      });
+      updateSelBar(filtered);
+    }
+
+    // -----------------------------------------------------------
+    // 复选与 CSV 导出
+    // -----------------------------------------------------------
+    function updateSelBar(filtered) {
+      const bucket = state.checked[state.kind];
+      document.getElementById('sel-count').textContent = `已选 ${bucket.size}`;
+      document.getElementById('btn-export-csv').disabled = bucket.size === 0;
+      // 「对比勾选」仅因子 Tab 可用：把勾选的因子切到评级榜做横向对比
+      document.getElementById('btn-compare-lb').disabled =
+        state.kind !== 'factors' || state.checked.factors.size === 0;
+      // 全选框状态：当前筛选结果全勾选 -> 勾选；部分勾选 -> 半选
+      const all = document.getElementById('sel-all');
+      const list = filtered || [];
+      const hit = list.filter(it => bucket.has(itemLabel(it, state.kind))).length;
+      all.checked = list.length > 0 && hit === list.length;
+      all.indeterminate = hit > 0 && hit < list.length;
+    }
+
+    function csvCell(v) {
+      const s = String(v == null ? '' : v);
+      return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    }
+
+    function exportCheckedCsv() {
+      const kind = state.kind;
+      const bucket = state.checked[kind];
+      if (!bucket.size) return;
+      const rows = (state.items[kind] || []).filter(it => bucket.has(itemLabel(it, kind)));
+      let header, lines;
+      if (kind === 'factors') {
+        header = ['factor_id', 'name', 'category', 'status', 'frequency', 'lookback_bars', 'version', 'author', 'registered', 'md_path', 'impl_path'];
+        lines = rows.map(it => [itemLabel(it, kind), it.name, it.category, it.status, it.frequency,
+          it.lookback_bars, it.version, authorLabelOf(it), it.registered !== false ? 'true' : 'false', it.md_path, it.impl_path]);
+      } else {
+        header = ['strategy_id', 'name', 'status', 'symbols', 'max_leverage', 'version', 'author', 'registered', 'md_path', 'py_path', 'impl_path'];
+        lines = rows.map(it => [itemLabel(it, kind), it.name, it.status,
+          Array.isArray(it.symbols) ? it.symbols.join('|') : '', it.max_leverage, it.version,
+          authorLabelOf(it), it.registered !== false ? 'true' : 'false', it.md_path, it.py_path, it.impl_path]);
+      }
+      const csv = '﻿' + [header, ...lines].map(r => r.map(csvCell).join(',')).join('\r\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      const a = document.createElement('a');
+      const ts = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      a.href = URL.createObjectURL(blob);
+      a.download = `explorer_${kind}_selected_${ts}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+    }
+
+    // -----------------------------------------------------------
+    // Render: preview
+    // -----------------------------------------------------------
+    async function onSelect(kind, id) {
+      state.selectedId = { kind, id };
+      state.pane = 'meta';
+      renderSidebar();
+      document.querySelectorAll('#preview-tabs .preview-tab').forEach(t => t.classList.toggle('active', t.dataset.pane === 'meta'));
+      renderPreviewMeta();
+      // 背景预取文档
+      prefetchDocs(kind, id);
+    }
+
+    function renderPreviewMeta() {
+      const head = document.getElementById('preview-head');
+      const tabs = document.getElementById('preview-tabs');
+      const body = document.getElementById('preview-body');
+      // 评级榜模式：右侧为 ECharts 横向柱状图，不显示条目头部/tab
+      if (state.kind === 'leaderboard') {
+        head.style.display = 'none';
+        tabs.style.display = 'none';
+        body.classList.remove('empty');
+        renderLeaderboardChart();
+        return;
+      }
+      const sel = state.selectedId;
+      if (!sel) {
+        head.style.display = 'none';
+        tabs.style.display = 'none';
+        body.classList.add('empty');
+        body.textContent = '选择左侧条目以预览详情';
+        return;
+      }
+      const it = currentItem();
+      if (!it) {
+        body.classList.add('empty');
+        body.textContent = '条目不存在';
+        return;
+      }
+      head.style.display = '';
+      tabs.style.display = '';
+      body.classList.remove('empty');
+
+      document.getElementById('p-id').textContent = itemLabel(it, sel.kind);
+      document.getElementById('p-name').textContent = it.name || '(no-name)';
+      const status = it.status || 'invalid';
+      document.getElementById('p-badges').innerHTML = `<span class="badge ${status}">${escapeHtml(status)}</span>` + (sel.kind === 'factors' ? factorCatBadge(it) : '') + (it.registered === false ? '<span class="badge invalid">未注册</span>' : '');
+      renderHeadCheckBadge();
+
+      // meta 摘要
+      const metaBits = [];
+      if (sel.kind === 'factors') {
+        if (it.version) metaBits.push(['版本', it.version]);
+        if (it.category) metaBits.push(['分类', it.category]);
+        if (it.frequency) metaBits.push(['频率', it.frequency]);
+        if (it.lookback_bars) metaBits.push(['lookback', it.lookback_bars]);
+        if (it.md_path)  metaBits.push(['md',  it.md_path.split(/[\\/]/).slice(-2).join('/')]);
+        if (it.impl_path) metaBits.push(['impl', it.impl_path.split(/[\\/]/).slice(-2).join('/')]);
+      } else {
+        if (it.version) metaBits.push(['版本', it.version]);
+        if (Array.isArray(it.symbols)) metaBits.push(['symbols', it.symbols.join(', ')]);
+        if (it.max_leverage != null) metaBits.push(['最大杠杆', it.max_leverage]);
+        if (it.md_path)  metaBits.push(['md',  it.md_path.split(/[\\/]/).slice(-2).join('/')]);
+        if (it.py_path)  metaBits.push(['py',  it.py_path.split(/[\\/]/).slice(-2).join('/')]);
+        if (it.impl_path) metaBits.push(['impl', it.impl_path.split(/[\\/]/).slice(-2).join('/')]);
+      }
+      document.getElementById('p-meta').innerHTML = metaBits.map(([k, v]) => `<span><b>${escapeHtml(k)}:</b> ${escapeHtml(String(v))}</span>`).join('');
+
+      renderPreviewBody();
+    }
+
+    async function renderPreviewBody() {
+      const body = document.getElementById('preview-body');
+      const sel = state.selectedId;
+      const pane = state.pane;
+      if (!sel) return;
+
+      const it = currentItem();
+
+      if (pane === 'meta') {
+        if (!it) {
+          body.innerHTML = `<div class="err-box">条目不存在</div>`;
+          return;
+        }
+        const blocks = [];
+        // 校验错误（如有）
+        if (it.registered === false && Array.isArray(it.validation_errors) && it.validation_errors.length) {
+          blocks.push(`
+            <div class="sec">
+              <h4>校验错误</h4>
+              <div class="err-list">
+                ${it.validation_errors.map(e => `<div class="e"><b>规则 #${escapeHtml(String(e.rule_no))}</b>${escapeHtml(e.field || '')} — ${escapeHtml(e.message || '')}</div>`).join('')}
+              </div>
+            </div>`);
+        }
+        // params
+        const params = it.params || {};
+        if (Object.keys(params).length) {
+          const kv = Object.entries(params).map(([k, v]) => `<div class="k">${escapeHtml(k)}</div><div class="v">${escapeHtml(JSON.stringify(v))}</div>`).join('');
+          blocks.push(`<div class="sec"><h4>params</h4><div class="kv">${kv}</div></div>`);
+        }
+        // 最新值（因子）
+        if (sel.kind === 'factors' && it.latest_values && Object.keys(it.latest_values).length) {
+          const rows = Object.entries(it.latest_values).map(([sym, v]) =>
+            `<div class="k">${escapeHtml(sym)}</div><div class="v">${escapeHtml(String(v.value))} <small>(${escapeHtml(String(v.ts))})</small></div>`
+          ).join('');
+          blocks.push(`<div class="sec"><h4>最新值</h4><div class="kv">${rows}</div></div>`);
+        }
+        // last_error
+        if (it.last_error) {
+          blocks.push(`<div class="sec"><h4>last_error</h4><div class="doc-block" style="color: var(--down);">${escapeHtml(it.last_error)}</div></div>`);
+        }
+        // strategy 摘要
+        if (sel.kind !== 'factors') {
+          blocks.push(`<div class="sec">
+            <h4>概要</h4>
+            <div class="kv">
+              <div class="k">status</div><div class="v">${escapeHtml(it.status)}</div>
+              <div class="k">registered</div><div class="v">${it.registered !== false ? 'true' : 'false'}</div>
+              ${it.last_run ? `<div class="k">last_run</div><div class="v">${escapeHtml(it.last_run)}</div>` : ''}
+              ${it.last_orders != null ? `<div class="k">last_orders</div><div class="v">${it.last_orders}</div>` : ''}
+              ${it.last_rejected != null ? `<div class="k">last_rejected</div><div class="v">${it.last_rejected}</div>` : ''}
+            </div>
+          </div>`);
+        }
+        body.innerHTML = blocks.join('') || '<div class="err-box">无内容</div>';
+      } else if (pane === 'rating') {
+        // 评级面板：lazy fetch，渲染因子评测指标
+        renderRatingPane(body, sel);
+      } else if (pane === 'eval') {
+        // 评估指标面板（试点）：检查状态 + 两套口径指标并发加载
+        renderEvalPane(body, sel);
+      } else {
+        // doc / source
+        body.innerHTML = '<div class="err-box">加载中…</div>';
+        try {
+          const res = await fetchMd(sel.kind, sel.id);
+          body.innerHTML = `
+            <div class="sec"><h4>${sel.kind === 'pystrategies' ? 'Python 源码' : 'Markdown 文档'} — ${escapeHtml(res.name || '')}</h4>
+              <pre class="doc-block">${escapeHtml(res.content || '(空)')}</pre>
+            </div>`;
+          // 因子/策略额外提供 impl 源码
+          if (sel.kind === 'factors' || sel.kind === 'strategies') {
+            try {
+              const impl = await fetchImpl(sel.kind, sel.id);
+              body.innerHTML += `
+                <div class="sec"><h4>Python 实现 — ${escapeHtml(impl.name || '')}</h4>
+                  <pre class="doc-block">${escapeHtml(impl.content || '(空)')}</pre>
+                </div>`;
+            } catch (e) {
+              body.innerHTML += `<div class="sec"><h4>Python 实现</h4><div class="err-box">无法加载: ${escapeHtml(String(e))}</div></div>`;
+            }
+          }
+        } catch (e) {
+          body.innerHTML = `<div class="err-box">加载失败: ${escapeHtml(String(e))}</div>`;
+        }
+      }
+    }
+
+    // -----------------------------------------------------------
+    // Render: 评级（rating）面板
+    // -----------------------------------------------------------
+    // 前端结果缓存：key=因子id@窗口天数；「重新计算」走 refresh=1 强制后端重算并覆盖缓存
+    const _ratingCache = new Map();
+
+    // 评测窗口设置：localStorage 持久化，默认 30 天（推荐）
+    const RATING_WIN_KEY = 'cpl_rating_window';
+    const RATING_WIN_UNITS = { m: '分钟', h: '小时', d: '天' };
+    function loadRatingWin() {
+      try {
+        const w = JSON.parse(localStorage.getItem(RATING_WIN_KEY));
+        if (w && isFinite(w.value) && w.value > 0 && RATING_WIN_UNITS[w.unit]) return w;
+      } catch (e) {}
+      return { value: 30, unit: 'd' };
+    }
+    function saveRatingWin(w) {
+      try { localStorage.setItem(RATING_WIN_KEY, JSON.stringify(w)); } catch (e) {}
+    }
+    // 换算为后端 days 参数（天，支持小数）；保留 4 位小数以稳定缓存 key
+    function ratingWinDays(w) {
+      const d = w.unit === 'm' ? w.value / 1440 : w.unit === 'h' ? w.value / 24 : w.value;
+      return Math.round(d * 10000) / 10000;
+    }
+    function ratingWinLabel(w) {
+      return `${w.value} ${RATING_WIN_UNITS[w.unit]}`;
+    }
+
+    async function renderRatingPane(body, sel, force) {
+      if (sel.kind !== 'factors') {
+        body.innerHTML = '<div class="err-box" style="color: var(--text-2);">评级仅适用于因子</div>';
+        return;
+      }
+      const days = ratingWinDays(loadRatingWin());
+      const cacheKey = sel.id + '@' + days;
+      const cached = _ratingCache.get(cacheKey);
+      if (cached && !force) {
+        body.innerHTML = ratingHtml(cached);
+        bindRatingControls(body, sel);
+        return;
+      }
+      body.innerHTML = '<div class="err-box" style="color: var(--text-2);">计算中（首次约需数秒）…</div>';
+      try {
+        const qs = `days=${days}${force ? '&refresh=1' : ''}`;
+        const r = await fetch(`/api/admin/factors/${encodeURIComponent(sel.id)}/rating?${qs}`);
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const res = await r.json();
+        _ratingCache.set(cacheKey, res);
+        // 防竞态：fetch 期间用户可能已切换选中项 / tab / 窗口设置
+        if (state.pane !== 'rating' || !state.selectedId || state.selectedId.id !== sel.id) return;
+        if (ratingWinDays(loadRatingWin()) !== days) return;
+        body.innerHTML = ratingHtml(res);
+        bindRatingControls(body, sel);
+      } catch (e) {
+        if (state.pane !== 'rating') return;
+        body.innerHTML = `<div class="err-box">评级加载失败: ${escapeHtml(String(e))}</div>`;
+      }
+    }
+
+    function bindRatingControls(body, sel) {
+      const refreshBtn = body.querySelector('#btn-rating-refresh');
+      if (refreshBtn) refreshBtn.addEventListener('click', () => renderRatingPane(body, sel, true));
+      const applyBtn = body.querySelector('#btn-rating-apply');
+      if (applyBtn) applyBtn.addEventListener('click', () => {
+        const vEl = body.querySelector('#rating-win-value');
+        const uEl = body.querySelector('#rating-win-unit');
+        const errEl = body.querySelector('#rating-win-err');
+        const value = Number(vEl && vEl.value);
+        const unit = uEl && uEl.value;
+        // 校验：正数；分钟窗口至少 30 分钟（后端下限≈0.02 天，且样本太少评不出数）
+        if (!isFinite(value) || value <= 0 || !RATING_WIN_UNITS[unit]) {
+          if (errEl) errEl.textContent = '请输入正数';
+          return;
+        }
+        if (unit === 'm' && value < 30) {
+          if (errEl) errEl.textContent = '分钟窗口至少 30 分钟';
+          return;
+        }
+        if (errEl) errEl.textContent = '';
+        saveRatingWin({ value: Math.floor(value), unit });
+        renderRatingPane(body, sel, false);
+      });
+    }
+
+    // -----------------------------------------------------------
+    // Render: 评估指标（eval）面板（试点）
+    // -----------------------------------------------------------
+    async function renderEvalPane(body, sel) {
+      if (sel.kind !== 'factors') {
+        body.innerHTML = '<div class="err-box" style="color: var(--text-2);">评估指标仅适用于因子</div>';
+        return;
+      }
+      const myId = sel.id;
+      body.innerHTML = `
+        <div class="eval-block" id="eval-status">
+          <h4>因子检查状态</h4>
+          <div class="eval-spin">加载中…</div>
+        </div>
+        <div class="eval-block" id="eval-rating">
+          <h4>近30天快速评级</h4>
+          <div class="eval-scope">口径：/api/admin/factors/{id}/rating —— 近 N 天快速打分（S~D + 信号回测）；与下方深度评估是两套口径，刻意并存，不要混用</div>
+          <div class="eval-spin">计算中（首次约需数秒）…</div>
+        </div>
+        <div class="eval-block" id="eval-metrics">
+          <h4>开发集深度评估</h4>
+          <div class="eval-scope">口径：/api/admin/bias-control/factors/{id}/metrics —— 开发集深度评估（IC/RankIC/ICIR/衰减/分层/滚动/换手/合格判定），首次计算可能需要数十秒</div>
+          <div class="eval-spin">计算中（可能需要数十秒）…</div>
+        </div>`;
+      // 防竞态：异步返回时用户可能已切换选中项 / tab
+      const alive = () => state.pane === 'eval' && !!state.selectedId && state.selectedId.id === myId;
+      // 三块并发加载、互不阻塞；列表渲染不受影响
+      loadEvalStatus(myId, alive);
+      loadEvalRating(myId, alive);
+      loadEvalMetrics(myId, alive);
+    }
+
+    async function loadEvalStatus(id, alive) {
+      const el = document.getElementById('eval-status');
+      if (!el) return;
+      try {
+        const r = await fetch(`/api/factors/${encodeURIComponent(id)}/check-status`);
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const row = await r.json();
+        state.checkStatus[id] = row;
+        if (!alive()) return;
+        const [cls, label] = checkBadgeInfo(row);
+        const bits = [];
+        bits.push(`<span class="badge ${cls}" style="font-size:12px;padding:3px 10px;">${escapeHtml(label)}</span>`);
+        const kv = [];
+        if (row.attested_by) kv.push(['检查人', row.attested_by]);
+        if (row.attested_at) kv.push(['登记时间', row.attested_at]);
+        if (row.updated_at) kv.push(['状态更新', row.updated_at]);
+        if (row.hash_changed) kv.push(['提示', '因子文件在登记后已变更，需重新检查']);
+        if (row.metrics_compute) kv.push(['指标预计算', row.metrics_compute === 'running' ? '后台计算中…' : row.metrics_compute === 'done' ? '已完成' : String(row.metrics_compute)]);
+        const unchecked = !row.status || row.status === 'unchecked';
+        const checking = row.status === 'checking';
+        const checked = row.status === 'checked';
+        const canAct = unchecked || row.hash_changed;
+        el.innerHTML = `
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">${bits.join('')}
+            ${kv.map(([k, v]) => `<small style="color:var(--text-2);"><b>${escapeHtml(k)}:</b> ${escapeHtml(String(v))}</small>`).join('')}
+          </div>
+          <div class="eval-actions">
+            ${!checking ? '<button id="btn-attest">人工检查</button>' : ''}
+            ${canAct ? '<button id="btn-run-check">自动偏差检查</button>' : ''}
+            ${checked ? '<button id="btn-uncheck">移回待检查</button>' : ''}
+            ${checking ? '<small style="color:#4c9aff;">自动检查运行中，完成后自动标记「已检查·自动」，可稍后刷新</small>' : ''}
+            <a class="link-btn" href="/api/factors/${encodeURIComponent(id)}/self-check-package" title="下载离线自查包（zip），脱离服务自行跑五查">⬇ 离线自查包</a>
+          </div>
+          <div id="eval-status-msg" style="margin-top:6px;font-size:12px;color:var(--text-2);"></div>`;
+        const msgEl = el.querySelector('#eval-status-msg');
+        const attestBtn = el.querySelector('#btn-attest');
+        if (attestBtn) attestBtn.addEventListener('click', async () => {
+          const name = window.prompt('请输入检查人姓名（登记后该因子标记为「已检查·人工」）：');
+          if (!name || !name.trim()) return;
+          attestBtn.disabled = true;
+          try {
+            const r = await fetch(`/api/factors/${encodeURIComponent(id)}/attest`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: name.trim() }),
+            });
+            const data = await r.json();
+            if (!r.ok) throw new Error(data.detail || ('HTTP ' + r.status));
+            if (msgEl) msgEl.textContent = `已登记：${name.trim()}`;
+            await refreshOneCheckStatus(id);
+            if (alive()) loadEvalStatus(id, alive);
+          } catch (e) {
+            if (msgEl) msgEl.textContent = '登记失败: ' + String(e.message || e);
+            attestBtn.disabled = false;
+          }
+        });
+        const runBtn = el.querySelector('#btn-run-check');
+        if (runBtn) runBtn.addEventListener('click', async () => {
+          if (!window.confirm('自动偏差检查将运行五类检查（前视/全样本泄露/多重检验/过拟合/成本），可能耗时数分钟到数十分钟。确认启动？')) return;
+          runBtn.disabled = true;
+          try {
+            const r = await fetch(`/api/factors/${encodeURIComponent(id)}/run-check`, { method: 'POST' });
+            const data = await r.json();
+            if (!r.ok) throw new Error(data.detail || ('HTTP ' + r.status));
+            if (msgEl) msgEl.textContent = data.message || '已启动';
+            await refreshOneCheckStatus(id);
+            if (alive()) loadEvalStatus(id, alive);
+          } catch (e) {
+            if (msgEl) msgEl.textContent = '启动失败: ' + String(e.message || e);
+            runBtn.disabled = false;
+          }
+        });
+        const uncheckBtn = el.querySelector('#btn-uncheck');
+        if (uncheckBtn) uncheckBtn.addEventListener('click', async () => {
+          if (!window.confirm('确认将该因子移回「待检查」？登记人与登记时间将被清空。')) return;
+          uncheckBtn.disabled = true;
+          try {
+            const r = await fetch(`/api/factors/${encodeURIComponent(id)}/uncheck`, { method: 'POST' });
+            const data = await r.json();
+            if (!r.ok) throw new Error(data.detail || ('HTTP ' + r.status));
+            if (msgEl) msgEl.textContent = '已移回待检查';
+            await refreshOneCheckStatus(id);
+            if (alive()) loadEvalStatus(id, alive);
+          } catch (e) {
+            if (msgEl) msgEl.textContent = '操作失败: ' + String(e.message || e);
+            uncheckBtn.disabled = false;
+          }
+        });
+      } catch (e) {
+        if (!alive()) return;
+        el.innerHTML = `<h4>因子检查状态</h4><div class="err-box">状态加载失败: ${escapeHtml(String(e.message || e))}</div>`;
+      }
+    }
+
+    async function loadEvalRating(id, alive) {
+      const el = document.getElementById('eval-rating');
+      if (!el) return;
+      try {
+        const r = await fetch(`/api/admin/factors/${encodeURIComponent(id)}/rating?days=30`);
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const res = await r.json();
+        if (!alive()) return;
+        const agg = res.aggregate || {};
+        const grade = agg.grade || null;
+        const gcls = grade ? 'grade-' + String(grade).toLowerCase() : 'grade-na';
+        let inner;
+        if (agg.not_supported) {
+          inner = `<div style="font-size:12px;color:var(--text-2);">${escapeHtml((res.notes || []).join('；') || '该因子类型不支持快速评级')}</div>`;
+        } else {
+          inner = `
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+              <span class="grade-badge ${gcls}">${escapeHtml(grade || 'N/A')}</span>
+              <div class="eval-kv" style="flex:1;">
+                <div><div class="k">RankIC</div><div class="v">${fmtRatio(agg.rank_ic_mean)}</div></div>
+                <div><div class="k">ICIR</div><div class="v">${fmtRatio(agg.icir)}</div></div>
+                <div><div class="k">Sharpe</div><div class="v">${fmtRatio(agg.sharpe)}</div></div>
+                <div><div class="k">年化</div><div class="v">${fmtPct(agg.annualized_return_pct)}</div></div>
+                <div><div class="k">最大回撤</div><div class="v">${fmtPct(agg.max_drawdown_pct)}</div></div>
+                <div><div class="k">标的数</div><div class="v">${fmtInt(agg.n_symbols_ok)}/${fmtInt(agg.n_symbols)}</div></div>
+              </div>
+            </div>
+            ${agg.insufficient ? '<div class="rating-note">样本不足：评级基于 factor_value 近 30 天落库值，新导入因子需先积累在线计算数据</div>' : ''}`;
+        }
+        el.innerHTML = `
+          <h4>近30天快速评级</h4>
+          <div class="eval-scope">口径：/api/admin/factors/{id}/rating —— 近 N 天快速打分（S~D + 信号回测）；与下方深度评估是两套口径，刻意并存，不要混用</div>
+          ${inner}`;
+      } catch (e) {
+        if (!alive()) return;
+        el.innerHTML = `<h4>近30天快速评级</h4><div class="err-box">加载失败: ${escapeHtml(String(e.message || e))}</div>`;
+      }
+    }
+
+    async function loadEvalMetrics(id, alive) {
+      const el = document.getElementById('eval-metrics');
+      if (!el) return;
+      try {
+        const r = await fetch(`/api/admin/bias-control/factors/${encodeURIComponent(id)}/metrics`);
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const res = await r.json();
+        if (!alive()) return;
+        const qual = res.qualification || {};
+        const quantile = res.quantile_test || {};
+        const status = res.status || 'UNKNOWN';
+        const qualTxt = qual.qualified == null ? '未判定' : (qual.qualified ? '✅ 合格' : '❌ 不合格');
+        const kv = [
+          ['状态', status],
+          ['RankIC', res.rank_ic], ['IC', res.ic], ['ICIR', res.icir],
+          ['p-value', qual.p_value], ['衰减比', qual.decay_ratio],
+          ['分层多空差', quantile.long_short], ['换手率', res.turnover],
+          ['合格判定', qualTxt],
+        ];
+        el.innerHTML = `
+          <h4>开发集深度评估</h4>
+          <div class="eval-scope">口径：/api/admin/bias-control/factors/{id}/metrics —— 开发集深度评估（IC/RankIC/ICIR/衰减/分层/滚动/换手/合格判定）</div>
+          <div class="eval-kv">
+            ${kv.map(([k, v]) => `<div><div class="k">${escapeHtml(k)}</div><div class="v">${typeof v === 'number' ? fmtRatio(v) : escapeHtml(v == null ? '—' : String(v))}</div></div>`).join('')}
+          </div>
+          ${res.failure_reason ? `<div class="rating-note">${escapeHtml(String(res.failure_reason))}</div>` : ''}
+          ${status === 'not_evaluated' ? '<div class="rating-note">指标尚未计算。刚导入的因子会自动后台预计算（查看上方「指标预计算」状态），稍候刷新本面板即可。</div>' : ''}
+          ${(qual.reasons || []).map(x => `<div class="rating-note">${escapeHtml(String(x))}</div>`).join('')}`;
+      } catch (e) {
+        if (!alive()) return;
+        el.innerHTML = `<h4>开发集深度评估</h4><div class="err-box">加载失败: ${escapeHtml(String(e.message || e))}</div>`;
+      }
+    }
+
+    // 数字格式化：百分比 2 位（负数标红），比率 3 位，null 显示 —
+    function fmtPct(v) {
+      if (v == null || !isFinite(v)) return '<span style="color: var(--idle);">—</span>';
+      const cls = v < 0 ? ' class="num-down"' : '';
+      return `<span${cls}>${Number(v).toFixed(2)}%</span>`;
+    }
+    function fmtRatio(v) {
+      if (v == null || !isFinite(v)) return '<span style="color: var(--idle);">—</span>';
+      const cls = v < 0 ? ' class="num-down"' : '';
+      return `<span${cls}>${Number(v).toFixed(3)}</span>`;
+    }
+    function fmtInt(v) {
+      return v == null ? '—' : String(v);
+    }
+
+    function ratingHtml(res) {
+      const agg = res.aggregate || {};
+      const parts = [];
+      // 1. 顶部：综合评级大徽章 + status 审核徽章 + 评测窗口说明
+      const grade = agg.grade || null;
+      const gcls = grade ? 'grade-' + grade.toLowerCase() : 'grade-na';
+      const status = res.status || 'invalid';
+      const win = res.eval_window || {};
+      const winSet = loadRatingWin();
+      parts.push(`<div class="sec"><div class="rating-head">
+        <span class="grade-badge ${gcls}" title="综合评级（基于 |RankIC| / |ICIR| / Sharpe 规则打分）">${escapeHtml(grade || 'N/A')}</span>
+        <span class="badge ${escapeHtml(status)}">${escapeHtml(status)}</span>
+        <span class="grade-meta">
+          评测窗口：最近 ${escapeHtml(ratingWinLabel(winSet))} · horizon=${escapeHtml(String(win.horizon || '—'))} bar<br>
+          方向语义：${escapeHtml(res.direction_text || '(未声明)')} → ${res.bullish_high ? '值大看多' : '值大看空'} · 覆盖 ${escapeHtml(String(agg.n_symbols || 0))} 个标的
+        </span>
+        <button id="btn-rating-refresh" title="绕过缓存重新计算">↻ 重新计算</button>
+      </div>
+      <div class="rating-win">
+        窗口 <input id="rating-win-value" type="number" min="1" step="1" value="${escapeHtml(String(winSet.value))}">
+        <select id="rating-win-unit">
+          <option value="m"${winSet.unit === 'm' ? ' selected' : ''}>分钟</option>
+          <option value="h"${winSet.unit === 'h' ? ' selected' : ''}>小时</option>
+          <option value="d"${winSet.unit === 'd' ? ' selected' : ''}>天</option>
+        </select>
+        <button id="btn-rating-apply" title="按新窗口重新评测">应用</button>
+        <span id="rating-win-err" class="rating-win-err"></span>
+        <small class="rating-win-note">默认 30 天（推荐）；窗口越短有效样本越少，易触发「样本不足」</small>
+      </div></div>`);
+
+      if (agg.not_supported) {
+        // 横截面 / 无数据输入的因子：只展示提示
+        parts.push(notesHtml(res.notes));
+        return parts.join('');
+      }
+
+      // 2. 预测力（IC 类）
+      parts.push(`<div class="sec"><h4>预测力（分块 IC）</h4><div class="kv">
+        <div class="k">ic_mean</div><div class="v">${fmtRatio(agg.ic_mean)}</div>
+        <div class="k">rank_ic_mean</div><div class="v">${fmtRatio(agg.rank_ic_mean)}</div>
+        <div class="k">icir</div><div class="v">${fmtRatio(agg.icir)}</div>
+        <div class="k">ic_positive_ratio</div><div class="v">${fmtRatio(agg.ic_positive_ratio)}</div>
+      </div></div>`);
+
+      // 3. 信号回测
+      parts.push(`<div class="sec"><h4>信号回测（±1 仓位 · 双边费 0.001/次）</h4><div class="kv">
+        <div class="k">total_return</div><div class="v">${fmtPct(agg.total_return_pct)}</div>
+        <div class="k">annualized</div><div class="v">${fmtPct(agg.annualized_return_pct)}</div>
+        <div class="k">max_drawdown</div><div class="v">${fmtPct(agg.max_drawdown_pct)}</div>
+        <div class="k">sharpe</div><div class="v">${fmtRatio(agg.sharpe)}</div>
+        <div class="k">calmar</div><div class="v">${fmtRatio(agg.calmar)}</div>
+        <div class="k">win_rate</div><div class="v">${agg.win_rate == null ? '—' : (agg.win_rate * 100).toFixed(2) + '%'}</div>
+        <div class="k">trades</div><div class="v">${fmtInt(agg.trades)}</div>
+        <div class="k">turnover</div><div class="v">${fmtRatio(agg.turnover)}</div>
+        <div class="k">avg_hold_bars</div><div class="v">${agg.avg_hold_bars == null ? '—' : Number(agg.avg_hold_bars).toFixed(1)}</div>
+      </div></div>`);
+
+      // 4. 数据质量
+      let dq = `<div class="kv">
+        <div class="k">coverage</div><div class="v">${agg.coverage == null ? '—' : (agg.coverage * 100).toFixed(2) + '%'}</div>
+        <div class="k">n_samples</div><div class="v">${fmtInt(agg.n_samples)}</div>
+        <div class="k">span_days</div><div class="v">${agg.span_days == null ? '—' : Number(agg.span_days).toFixed(1)}</div>
+        <div class="k">last_ts</div><div class="v">${escapeHtml(String(agg.last_ts || '—'))}</div>
+      </div>`;
+      if (res.last_error) {
+        dq += `<div class="err-box" style="text-align:left; padding:8px 0 0;">last_error: ${escapeHtml(res.last_error)}</div>`;
+      }
+      parts.push(`<div class="sec"><h4>数据质量</h4>${dq}</div>`);
+
+      // 5. 分标的明细
+      const rows = (res.per_symbol || []);
+      if (rows.length) {
+        const trs = rows.map(r => {
+          if (r.insufficient) {
+            return `<tr><td>${escapeHtml(r.symbol)}</td><td colspan="5" style="color: var(--idle);">${escapeHtml(r.reason || '样本不足')}</td></tr>`;
+          }
+          return `<tr><td>${escapeHtml(r.symbol)}</td>
+            <td>${fmtRatio(r.rank_ic_mean)}</td>
+            <td>${fmtRatio(r.sharpe)}</td>
+            <td>${fmtPct(r.total_return_pct)}</td>
+            <td>${fmtPct(r.max_drawdown_pct)}</td>
+            <td>${r.win_rate == null ? '—' : (r.win_rate * 100).toFixed(1) + '%'}</td></tr>`;
+        }).join('');
+        parts.push(`<div class="sec"><h4>分标的明细</h4>
+          <table class="rating-table">
+            <thead><tr><th>symbol</th><th>rank_ic</th><th>sharpe</th><th>total_ret</th><th>max_dd</th><th>win_rate</th></tr></thead>
+            <tbody>${trs}</tbody>
+          </table></div>`);
+      }
+
+      // 6. notes 列表（warn 色）
+      parts.push(notesHtml(res.notes));
+      return parts.join('');
+    }
+
+    function notesHtml(notes) {
+      if (!Array.isArray(notes) || !notes.length) return '';
+      return `<div class="sec"><h4>说明</h4>${notes.map(n => `<div class="rating-note">⚠ ${escapeHtml(String(n))}</div>`).join('')}</div>`;
+    }
+
+    // -----------------------------------------------------------
+    // 评级榜（leaderboard）：横向评测 + 指标排序 + ECharts 图表
+    // -----------------------------------------------------------
+    // 指标定义：key=后端字段，label=中文标签，fmt=格式化方式；
+    // abs=true 表示按绝对值排序（反向因子同样有预测力，与 grade 规则一致）
+    const LB_METRICS = [
+      { key: 'rank_ic_mean',          label: 'RankIC 均值（按|值|）',    fmt: 'ratio', abs: true },
+      { key: 'icir',                  label: 'ICIR（按|值|）',           fmt: 'ratio', abs: true },
+      { key: 'sharpe',                label: 'Sharpe（按|值|）',         fmt: 'ratio', abs: true },
+      { key: 'total_return_pct',      label: '总收益率',                 fmt: 'pct' },
+      { key: 'annualized_return_pct', label: '年化收益率',               fmt: 'pct' },
+      { key: 'max_drawdown_pct',      label: '最大回撤（越接近0越好）',  fmt: 'pct' },
+      { key: 'win_rate',              label: '胜率',                     fmt: 'ratio_pct' },
+      { key: 'turnover',              label: '换手率',                   fmt: 'ratio' },
+      { key: 'coverage',              label: '数据覆盖率',               fmt: 'ratio_pct' },
+      { key: 'grade',                 label: '综合评级',                 fmt: 'grade' },
+    ];
+    const LB_GRADE_ORDER = ['S', 'A', 'B', 'C', 'D'];
+    // 柱子按 grade 分色：S/A 主题金，B 绿，C 灰，D 红，无评级暗灰
+    const LB_GRADE_COLORS = { S: '#f0b90b', A: '#d9a520', B: '#0ecb81', C: '#848e9c', D: '#f6465d' };
+    const LB_BATCH = 8;  // 批量计算每批因子数（后端上限 20，留余量）
+
+    function lbMetric() {
+      return LB_METRICS.find(m => m.key === state.leaderboard.metric) || LB_METRICS[0];
+    }
+
+    // 排序键：null 表示不参与排序（沉底灰显）；
+    // max_drawdown 为负值，直接降序即"越接近 0 越好"，无需特判
+    function lbSortVal(e, metric) {
+      if (!e.computed || e.not_supported || e.insufficient || e.error) return null;
+      if (metric.key === 'grade') {
+        const gi = LB_GRADE_ORDER.indexOf(e.grade || '');
+        return gi < 0 ? null : (LB_GRADE_ORDER.length - gi);  // S=5 … D=1
+      }
+      const v = e[metric.key];
+      if (v == null || !isFinite(v)) return null;
+      return metric.abs ? Math.abs(v) : v;
+    }
+
+    // 当前可见条目：subset 模式只保留勾选子集；按当前指标降序，无效条目沉底
+    function lbVisibleEntries() {
+      const lb = state.leaderboard;
+      const metric = lbMetric();
+      let list = lb.entries.slice();
+      if (lb.subset) {
+        const keep = new Set(lb.subset);
+        list = list.filter(e => keep.has(e.factor_id));
+      }
+      const keyed = list.map(e => ({ e, sv: lbSortVal(e, metric) }));
+      keyed.sort((a, b) => {
+        if (a.sv == null && b.sv == null) return String(a.e.factor_id).localeCompare(String(b.e.factor_id));
+        if (a.sv == null) return 1;
+        if (b.sv == null) return -1;
+        if (b.sv !== a.sv) return b.sv - a.sv;
+        // 并列时按 |RankIC| 兜底
+        return Math.abs(b.e.rank_ic_mean || 0) - Math.abs(a.e.rank_ic_mean || 0);
+      });
+      return keyed;
+    }
+
+    // 指标值展示格式化（行尾与柱子标签共用）
+    function lbFmtVal(e, metric) {
+      if (metric.key === 'grade') return e.grade || '—';
+      const v = e[metric.key];
+      if (v == null || !isFinite(v)) return '—';
+      if (metric.fmt === 'pct') return Number(v).toFixed(2) + '%';
+      if (metric.fmt === 'ratio_pct') return (v * 100).toFixed(2) + '%';
+      return Number(v).toFixed(3);
+    }
+
+    function renderLeaderboardSidebar() {
+      const lb = state.leaderboard;
+      const list = document.getElementById('side-list');
+      const metric = lbMetric();
+      const keyed = lbVisibleEntries();
+      const computedCnt = lb.entries.filter(e => e.computed).length;
+      document.getElementById('cnt-leaderboard').textContent = computedCnt;
+
+      // 排名序号只在参与排序的条目内编号
+      const rankOf = new Map();
+      keyed.filter(k => k.sv != null).forEach((k, i) => rankOf.set(k.e.factor_id, i + 1));
+
+      const rows = keyed.map(({ e, sv }) => {
+        const dim = sv == null;
+        const rank = rankOf.get(e.factor_id);
+        const tail = !e.computed
+          ? (e.error ? `错误: ${e.error}` : '未计算')
+          : e.not_supported ? '不支持评级'
+          : e.insufficient ? '样本不足' : null;
+        const gcls = e.grade ? 'grade-' + String(e.grade).toLowerCase() : 'grade-na';
+        return `
+          <div class="lb-row ${dim ? 'dim' : ''}" data-id="${escapeAttr(e.factor_id)}" data-dim="${dim ? 1 : 0}">
+            <span class="lb-rank ${rank && rank <= 3 ? 'top' : ''}">${rank || '—'}</span>
+            <span class="grade-mini ${gcls}">${escapeHtml(e.grade || '·')}</span>
+            <span class="lb-fid">${escapeHtml(e.factor_id)}</span>
+            <span class="lb-name">${escapeHtml(tail || e.name || '')}</span>
+            <span class="lb-val">${dim ? '' : escapeHtml(lbFmtVal(e, metric))}</span>
+          </div>`;
+      }).join('');
+
+      list.innerHTML = `
+        <div class="lb-panel">
+          <div class="lb-controls">
+            <select id="lb-metric">${LB_METRICS.map(m => `<option value="${m.key}" ${m.key === lb.metric ? 'selected' : ''}>${escapeHtml(m.label)}</option>`).join('')}</select>
+            <button class="btn-lb-compute" id="btn-lb-compute" ${lb.computing ? 'disabled' : ''}>${lb.computing ? '计算中…' : '计算全部'}</button>
+          </div>
+          ${lb.subset ? `<div class="lb-subset-bar">⊂ 对比子集：${lb.subset.length} 个因子 <a id="lb-subset-clear">✕ 显示全部</a></div>` : ''}
+          <div class="lb-progress" id="lb-progress" style="display:${lb.computing ? '' : 'none'}">
+            <div class="lb-progress-bar"><div class="lb-progress-fill" id="lb-progress-fill"></div></div>
+            <div class="lb-progress-text" id="lb-progress-text"></div>
+          </div>
+          <div class="lb-list" id="lb-list">${rows || '<div class="col-empty">暂无条目，点击【计算全部】</div>'}</div>
+        </div>`;
+
+      document.getElementById('lb-metric').addEventListener('change', (ev) => {
+        state.leaderboard.metric = ev.target.value;
+        renderLeaderboardSidebar();
+        renderLeaderboardChart();
+      });
+      document.getElementById('btn-lb-compute').addEventListener('click', () => lbComputeAll());
+      const clr = document.getElementById('lb-subset-clear');
+      if (clr) clr.addEventListener('click', () => {
+        state.leaderboard.subset = null;
+        renderLeaderboardSidebar();
+        renderLeaderboardChart();
+      });
+      list.querySelectorAll('.lb-row').forEach(el => {
+        if (el.dataset.dim === '1') return;
+        el.addEventListener('click', () => lbJumpToFactor(el.dataset.id));
+      });
+      if (lb.computing) lbUpdateProgress();
+      // 首次进入：自动拉一次无 ids 全量清单（毫秒级），填充元数据与已缓存指标
+      if (!lb.entries.length && !lb.computing) lbEnsureList();
+    }
+
+    function lbUpdateProgress() {
+      const p = state.leaderboard.progress;
+      const fill = document.getElementById('lb-progress-fill');
+      const text = document.getElementById('lb-progress-text');
+      if (!fill || !text) return;
+      fill.style.width = (p.total ? Math.round(p.done / p.total * 100) : 0) + '%';
+      let eta = '';
+      if (p.done > 0 && p.done < p.total) {
+        const remain = (Date.now() - p.startedAt) / 1000 / p.done * (p.total - p.done);
+        eta = `，预计剩余 ${remain >= 60 ? (remain / 60).toFixed(1) + ' 分钟' : Math.ceil(remain) + ' 秒'}`;
+      }
+      text.textContent = `${p.done}/${p.total} 已完成${eta}`;
+    }
+
+    // 首次进入榜单：拉全量清单（只读缓存，不现场计算）
+    async function lbEnsureList() {
+      const lb = state.leaderboard;
+      if (lb._loaded || lb.computing) return;
+      lb._loaded = true;
+      try {
+        const r = await fetch('/api/admin/factors/ratings/leaderboard');
+        if (r.ok) lbMergeEntries((await r.json()).entries);
+      } catch (e) {
+        lb._loaded = false;  // 静默失败，下次进入再试
+      }
+      if (state.kind === 'leaderboard') {
+        renderLeaderboardSidebar();
+        renderLeaderboardChart();
+      }
+    }
+
+    // 【计算全部】/【对比勾选】：全量清单 + 未计算因子分批同步计算（前端驱动，后端无后台线程）
+    async function lbComputeAll() {
+      const lb = state.leaderboard;
+      if (lb.computing) return;
+      lb.computing = true;
+      try {
+        // 1) 无 ids 拉全量清单（毫秒级，命中缓存的带指标）
+        const r = await fetch('/api/admin/factors/ratings/leaderboard');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        lbMergeEntries((await r.json()).entries);
+        lb._loaded = true;
+        if (state.kind !== 'leaderboard') return;
+        renderLeaderboardSidebar();
+        renderLeaderboardChart();
+        // 2) 未计算的因子分批计算；subset 模式只算勾选子集
+        let pending = lb.entries.filter(e => !e.computed).map(e => e.factor_id);
+        if (lb.subset) {
+          const keep = new Set(lb.subset);
+          pending = pending.filter(id => keep.has(id));
+        }
+        lb.progress = { done: 0, total: pending.length, startedAt: Date.now() };
+        renderLeaderboardSidebar();
+        for (let i = 0; i < pending.length; i += LB_BATCH) {
+          if (state.kind !== 'leaderboard') return;  // 防竞态：用户切走则中断
+          const batch = pending.slice(i, i + LB_BATCH);
+          const q = batch.map(encodeURIComponent).join(',');
+          const rr = await fetch(`/api/admin/factors/ratings/leaderboard?ids=${q}`);
+          if (rr.ok) lbMergeEntries((await rr.json()).entries);
+          lb.progress.done += batch.length;
+          if (state.kind !== 'leaderboard') return;
+          renderLeaderboardSidebar();
+          renderLeaderboardChart();
+        }
+      } catch (e) {
+        if (state.kind === 'leaderboard') {
+          const el = document.getElementById('lb-list');
+          if (el) el.innerHTML = `<div class="col-empty" style="color:var(--down)">批量计算失败: ${escapeHtml(String(e))}</div>`;
+        }
+      } finally {
+        state.leaderboard.computing = false;
+        if (state.kind === 'leaderboard') {
+          renderLeaderboardSidebar();
+          renderLeaderboardChart();
+        }
+      }
+    }
+
+    // 合并榜单条目（按 factor_id 覆盖），保持既有顺序、新条目追加
+    function lbMergeEntries(entries) {
+      const lb = state.leaderboard;
+      const byId = new Map(lb.entries.map(e => [e.factor_id, e]));
+      (entries || []).forEach(e => byId.set(e.factor_id, e));
+      lb.entries = [...byId.values()];
+    }
+
+    // 从榜单跳到因子：切回 factors tab 选中该因子并打开评级 pane
+    function lbJumpToFactor(fid) {
+      state.kind = 'factors';
+      document.querySelectorAll('#side-tabs .side-tab').forEach(x => x.classList.toggle('active', x.dataset.kind === 'factors'));
+      state.author = '';
+      rebuildAuthorOptions();
+      renderSidebar();
+      Promise.resolve(onSelect('factors', fid)).then(() => {
+        state.pane = 'rating';
+        document.querySelectorAll('#preview-tabs .preview-tab').forEach(t => t.classList.toggle('active', t.dataset.pane === 'rating'));
+        renderPreviewBody();
+      });
+    }
+
+    // 右侧预览：ECharts 横向柱状图（Top 30）+ 汇总行
+    function renderLeaderboardChart() {
+      const body = document.getElementById('preview-body');
+      if (state._lbChart) { state._lbChart.dispose(); state._lbChart = null; }
+      const metric = lbMetric();
+      const keyed = lbVisibleEntries();
+      const ranked = keyed.filter(k => k.sv != null);
+      // 汇总：已计算 x/y · S/A/B/C/D 各多少个
+      const computedCnt = state.leaderboard.entries.filter(e => e.computed).length;
+      const gradeCnt = { S: 0, A: 0, B: 0, C: 0, D: 0 };
+      state.leaderboard.entries.forEach(e => { if (e.grade && gradeCnt[e.grade] != null) gradeCnt[e.grade]++; });
+      const summary = `已计算 ${computedCnt}/${state.leaderboard.entries.length || keyed.length} · ` +
+        LB_GRADE_ORDER.map(g => `${g} ${gradeCnt[g]}`).join(' · ');
+
+      if (!ranked.length) {
+        body.innerHTML = `<div class="lb-hint">暂无可排行的已计算因子<br>点击左侧【计算全部】开始横向评测（首次约需数十秒，缓存 10 分钟内瞬时）</div>
+          <div class="lb-summary" style="text-align:center">${escapeHtml(summary)}</div>`;
+        return;
+      }
+      body.innerHTML = `<div class="lb-chart" id="lb-chart"></div>
+        <div class="lb-summary">${escapeHtml(summary)} · 指标：${escapeHtml(metric.label)}（图取 Top 30，点击柱子跳转该因子评级）</div>`;
+      if (typeof echarts === 'undefined') {
+        document.getElementById('lb-chart').innerHTML = '<div class="err-box">ECharts 加载失败（CDN 不可达），请检查网络后刷新</div>';
+        return;
+      }
+      const top = ranked.slice(0, 30);
+      const chart = echarts.init(document.getElementById('lb-chart'), null, { renderer: 'canvas' });
+      state._lbChart = chart;
+      chart.setOption({
+        backgroundColor: 'transparent',
+        grid: { left: 8, right: 56, top: 12, bottom: 28, containLabel: true },
+        xAxis: { type: 'value', axisLabel: { color: '#848e9c', fontSize: 11 }, splitLine: { lineStyle: { color: '#2b3139' } } },
+        yAxis: {
+          type: 'category', inverse: true,
+          data: top.map(({ e }) => e.factor_id),
+          axisLabel: { color: '#848e9c', fontSize: 11, fontFamily: 'Consolas, monospace' },
+          axisLine: { lineStyle: { color: '#2b3139' } },
+          axisTick: { show: false },
+        },
+        tooltip: {
+          trigger: 'item', backgroundColor: '#1e2329', borderColor: '#2b3139',
+          textStyle: { color: '#eaecef', fontSize: 12 },
+          formatter: (p) => {
+            const e = p.data.entry;
+            const f = (v, d) => (v == null || !isFinite(v)) ? '—' : Number(v).toFixed(d);
+            return `<b>${escapeHtml(e.factor_id)}</b> ${escapeHtml(e.name || '')}<br>` +
+              `评级: ${escapeHtml(e.grade || '—')}<br>` +
+              `RankIC: ${f(e.rank_ic_mean, 4)} · ICIR: ${f(e.icir, 3)}<br>` +
+              `Sharpe: ${f(e.sharpe, 2)} · 总收益: ${f(e.total_return_pct, 2)}%<br>` +
+              `胜率: ${e.win_rate == null ? '—' : (e.win_rate * 100).toFixed(1) + '%'}`;
+          },
+        },
+        series: [{
+          type: 'bar', barMaxWidth: 14,
+          data: top.map(k => ({
+            value: k.sv,
+            entry: k.e,
+            itemStyle: { color: LB_GRADE_COLORS[k.e.grade] || '#5e6773', borderRadius: [0, 3, 3, 0] },
+          })),
+          label: {
+            show: true, position: 'right', color: '#848e9c', fontSize: 10,
+            fontFamily: 'Consolas, monospace',
+            formatter: (p) => lbFmtVal(p.data.entry, metric),
+          },
+        }],
+      });
+      chart.on('click', (p) => { if (p.data && p.data.entry) lbJumpToFactor(p.data.entry.factor_id); });
+    }
+
+    // 窗口尺寸变化时图表自适应
+    window.addEventListener('resize', () => { if (state._lbChart) state._lbChart.resize(); });
+
+    function currentItem() {
+      const sel = state.selectedId;
+      if (!sel) return null;
+      return (state.items[sel.kind] || []).find(it => itemLabel(it, sel.kind) === sel.id);
+    }
+
+    // 预取文档，避免切换 tab 时等待
+    const _prefetchCache = new Map();
+    async function prefetchDocs(kind, id) {
+      const key = `${kind}|${id}`;
+      if (_prefetchCache.has(key)) return;
+      _prefetchCache.set(key, true);
+      try {
+        const res = await fetchMd(kind, id);
+        _prefetchCache.set(key, res);
+      } catch (e) {
+        _prefetchCache.set(key, { error: String(e) });
+      }
+    }
+
+    // -----------------------------------------------------------
+    // Events
+    // -----------------------------------------------------------
+    document.querySelectorAll('#side-tabs .side-tab').forEach(t => {
+      t.addEventListener('click', () => {
+        document.querySelectorAll('#side-tabs .side-tab').forEach(x => x.classList.remove('active'));
+        t.classList.add('active');
+        state.kind = t.dataset.kind;
+        // 切 tab 时尝试保留同 id 选中
+        if (state.selectedId && state.selectedId.kind !== state.kind) {
+          state.selectedId = null;
+        }
+        // 提交人筛选重置为「全部」并按新 Tab 重建选项
+        state.author = '';
+        rebuildAuthorOptions();
+        renderSidebar();
+        renderPreviewMeta();
+      });
+    });
+
+    document.querySelectorAll('#preview-tabs .preview-tab').forEach(t => {
+      t.addEventListener('click', () => {
+        document.querySelectorAll('#preview-tabs .preview-tab').forEach(x => x.classList.remove('active'));
+        t.classList.add('active');
+        state.pane = t.dataset.pane;
+        renderPreviewBody();
+      });
+    });
+
+    document.getElementById('search').addEventListener('input', (e) => {
+      state.query = e.target.value || '';
+      renderSidebar();
+    });
+
+    document.getElementById('author-filter').addEventListener('change', (e) => {
+      state.author = e.target.value || '';
+      renderSidebar();
+    });
+
+    // 复选工具条：全选（当前筛选结果）/ 清空 / 导出 CSV
+    document.getElementById('sel-all').addEventListener('change', (e) => {
+      const bucket = state.checked[state.kind];
+      (state._filtered || []).forEach(it => {
+        const id = itemLabel(it, state.kind);
+        if (e.target.checked) bucket.add(id); else bucket.delete(id);
+      });
+      renderSidebar();
+    });
+    document.getElementById('sel-none').addEventListener('click', () => {
+      state.checked[state.kind].clear();
+      renderSidebar();
+    });
+    document.getElementById('btn-export-csv').addEventListener('click', exportCheckedCsv);
+
+    // 「对比勾选」：把勾选的因子作为子集切到评级榜并触发批量计算
+    document.getElementById('btn-compare-lb').addEventListener('click', () => {
+      const ids = [...state.checked.factors];
+      if (!ids.length) return;
+      state.leaderboard.subset = ids;
+      state.kind = 'leaderboard';
+      document.querySelectorAll('#side-tabs .side-tab').forEach(x => x.classList.toggle('active', x.dataset.kind === 'leaderboard'));
+      state.selectedId = null;
+      renderSidebar();
+      renderPreviewMeta();
+      lbComputeAll();  // subset 模式下只计算勾选的因子
+    });
+
+    // 侧栏宽度拖拽
+    (function initSplitter() {
+      const app = document.querySelector('.app');
+      const splitter = document.getElementById('splitter');
+      let dragging = false;
+      splitter.addEventListener('mousedown', () => { dragging = true; document.body.style.cursor = 'col-resize'; });
+      window.addEventListener('mouseup',   () => { dragging = false; document.body.style.cursor = ''; });
+      window.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        const w = Math.max(380, Math.min(760, e.clientX));
+        app.style.gridTemplateColumns = `${w}px 6px 1fr`;
+      });
+    })();
+
+    // -----------------------------------------------------------
+    // Util
+    // -----------------------------------------------------------
+    function escapeHtml(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    function escapeAttr(s) { return escapeHtml(s); }
+
+    // -----------------------------------------------------------
+    // Boot
+    // -----------------------------------------------------------
+    async function reload() {
+      try {
+        const data = await fetchOverview();
+        state.items.factors       = data.factors       || [];
+        state.items.strategies    = data.strategies    || [];
+        state.items.pystrategies  = data.pystrategies  || [];
+        // 勾选项随数据刷新剪枝：已消失的条目从勾选集中移除
+        ['factors', 'strategies', 'pystrategies'].forEach(k => {
+          const alive = new Set(state.items[k].map(it => itemLabel(it, k)));
+          state.checked[k].forEach(id => { if (!alive.has(id)) state.checked[k].delete(id); });
+        });
+        rebuildAuthorOptions();
+        renderSidebar();
+        // 因子检查状态批量拉取（失败静默降级，不阻塞列表）
+        refreshCheckStatus();
+        // 选中恢复
+        if (state.selectedId && state.selectedId.kind === state.kind) {
+          const exists = (state.items[state.kind] || []).some(it => itemLabel(it, state.kind) === state.selectedId.id);
+          if (!exists) state.selectedId = null;
+        }
+        renderPreviewMeta();
+      } catch (e) {
+        document.getElementById('side-list').innerHTML = `<div class="side-empty" style="color:var(--down)">加载失败: ${escapeHtml(String(e))}<br><br>请确认后端已启动，且 <code>/api/admin/overview</code> 可访问</div>`;
+      }
+    }
+
+    // 头顶时间对照：UTC 与 SIN(+8)，秒级刷新
+    function tickClocks() {
+      const pad = (n) => String(n).padStart(2, '0');
+      const fmt = (d) => `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+      const now = Date.now();
+      document.getElementById('clock-utc').textContent = fmt(new Date(now));
+      document.getElementById('clock-sin').textContent = fmt(new Date(now + 8 * 3600 * 1000));
+    }
+    tickClocks();
+    setInterval(tickClocks, 1000);
+
+    reload();
+    setInterval(reload, 30000);  // 30s 增量刷新以反映热插拔
+  </script>
+</body>
+</html>

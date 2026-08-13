@@ -16,6 +16,9 @@ pandera>=0.22.0
 duckdb>=1.0.0
 fastapi>=0.115.0
 uvicorn>=0.30.0
+# 05 UI: sim 四页上传接口(multipart 表单)与因子 Excel 导出
+python-multipart>=0.0.9
+openpyxl>=3.1.0
 binance-connector>=3.13.0
 binance-futures-connector>=4.2.0
 ruamel-yaml>=0.19.1

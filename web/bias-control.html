@@ -1,0 +1,1722 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>因子库 — CryptoPaperLab</title>
+  <style>
+    :root {
+      --bg: #0b0e11;
+      --panel: #151a20;
+      --panel-2: #1e2329;
+      --border: #2b3139;
+      --text: #eaecef;
+      --text-2: #848e9c;
+      --accent: #f0b90b;
+      --up: #0ecb81;
+      --down: #f6465d;
+      --warn: #f0b90b;
+      --idle: #5e6773;
+      --blocked: #f0883e;
+      --hover: #2b3139;
+      --input-bg: #0b0e11;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font: 13px/1.5 var(--font); }
+    body { overflow-x: hidden; }
+    button, input, select { font: inherit; color: inherit; }
+    button { cursor: pointer; border: 1px solid transparent; background: var(--panel-2); padding: 7px 11px; border-radius: 4px; }
+    button:hover { background: var(--hover); }
+    button:disabled { cursor: not-allowed; color: var(--idle); opacity: .7; }
+    input, select { background: var(--input-bg); border: 1px solid var(--border); padding: 7px 9px; border-radius: 4px; outline: none; }
+    input:focus, select:focus, button:focus-visible, tr:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .mono { font-family: var(--mono); }
+
+    header {
+      height: 48px; padding: 0 16px; position: sticky; top: 0; z-index: 10;
+      display: flex; align-items: center; justify-content: space-between;
+      background: var(--panel); border-bottom: 1px solid var(--border);
+    }
+    .brand { display: flex; align-items: baseline; gap: 10px; font-weight: 700; font-size: 15px; white-space: nowrap; }
+    .brand small { color: var(--text-2); font-size: 11px; font-weight: 400; }
+    /* 头顶正中时间对照：UTC / SIN(+8)，秒级 */
+    .header-clocks { flex: 1; display: flex; justify-content: center; gap: 22px; font-size: 12px; color: var(--text-2); }
+    .header-clocks .clock b { color: var(--accent); margin-right: 4px; }
+    .header-clocks .clock .mono { color: var(--text); font-size: 13px; letter-spacing: .5px; }
+    .header-clocks .clock small { color: var(--text-2); }
+    .top-nav { display: flex; gap: 4px; align-items: center; }
+    .top-nav a { padding: 6px 12px; border: 1px solid transparent; border-radius: 4px; color: var(--text-2); font-size: 12px; }
+    .top-nav a:hover, .top-nav a.active { color: var(--accent); background: rgba(240,185,11,.08); border-color: rgba(240,185,11,.3); text-decoration: none; }
+
+    .page { max-width: 1680px; margin: 0 auto; padding: 22px 24px 40px; }
+    .page-head { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; margin-bottom: 18px; }
+    h1 { margin: 0; font-size: 22px; letter-spacing: .2px; }
+    .subtitle { margin: 5px 0 0; color: var(--text-2); }
+    .head-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+    .btn-primary { background: var(--accent); color: #0b0e11; font-weight: 700; }
+    .btn-primary:hover { filter: brightness(1.06); background: var(--accent); }
+    .btn-danger { border-color: rgba(246,70,93,.35); color: var(--down); }
+
+    .banner { display: none; align-items: flex-start; gap: 9px; padding: 11px 13px; margin-bottom: 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); }
+    .banner.show { display: flex; }
+    .banner.warn { border-color: rgba(240,185,11,.35); color: var(--warn); }
+    .banner.error { border-color: rgba(246,70,93,.4); color: var(--down); }
+    .banner.info { border-color: rgba(94,154,255,.35); color: #88b7ff; }
+    .banner strong { color: var(--text); }
+    .banner p { margin: 0; }
+
+    .cards { display: grid; grid-template-columns: repeat(8, minmax(110px, 1fr)); gap: 10px; margin-bottom: 16px; }
+    .card { min-height: 76px; padding: 12px 13px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); }
+    .card .label { color: var(--text-2); font-size: 11px; }
+    .card .value { margin-top: 7px; font: 700 18px var(--mono); color: var(--text); word-break: break-word; }
+    .card .value.small { font-size: 12px; line-height: 1.5; }
+
+    .workspace { border: 1px solid var(--border); border-radius: 6px; background: var(--panel); overflow: hidden; }
+    .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 11px 12px; border-bottom: 1px solid var(--border); background: var(--panel-2); }
+    .toolbar input { width: 190px; }
+    .toolbar select { min-width: 130px; }
+    .toolbar .spacer { flex: 1; }
+    .check-label { display: inline-flex; gap: 5px; align-items: center; color: var(--text-2); white-space: nowrap; }
+    .check-label input { accent-color: var(--accent); }
+    .toolbar-note { width: 100%; color: var(--text-2); font-size: 11px; }
+
+    .run-panel { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+    .run-summary { color: var(--text-2); font-size: 11px; }
+    .run-progress { display: none; flex: 1 1 260px; min-width: 220px; }
+    .run-progress.show { display: block; }
+    .progress-track { height: 7px; border-radius: 4px; overflow: hidden; background: var(--bg); }
+    .progress-fill { width: 0; height: 100%; background: var(--accent); transition: width .2s; }
+    .progress-text { margin-top: 4px; color: var(--text-2); font: 11px var(--mono); }
+
+    .table-wrap { overflow: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 1060px; }
+    th, td { padding: 9px 10px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+    th { position: sticky; top: 0; z-index: 2; color: var(--text-2); background: var(--panel-2); font-size: 11px; font-weight: 600; }
+    th button { padding: 0; background: transparent; color: inherit; border: 0; font-size: inherit; }
+    th button:hover { color: var(--text); background: transparent; }
+    td { font-size: 12px; }
+    tbody tr { cursor: pointer; }
+    tbody tr:hover, tbody tr:focus { background: rgba(240,185,11,.06); }
+    .factor-link { padding: 0; border: 0; background: transparent; color: var(--accent); font: 600 12px var(--mono); }
+    .factor-link:hover { text-decoration: underline; background: transparent; }
+    .row-check { padding: 3px 10px; font-size: 11px; white-space: nowrap; }
+    .status { display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; border: 1px solid transparent; border-radius: 10px; font: 600 10px var(--mono); }
+    .status::before { content: "●"; font-size: 8px; }
+    .status-pass { color: var(--up); border-color: rgba(14,203,129,.35); background: rgba(14,203,129,.1); }
+    .status-fail { color: var(--down); border-color: rgba(246,70,93,.35); background: rgba(246,70,93,.1); }
+    .status-not_checked { color: var(--idle); border-color: rgba(132,142,156,.35); background: rgba(132,142,156,.1); }
+    .status-running, .status-locked { color: #88b7ff; border-color: rgba(94,154,255,.35); background: rgba(94,154,255,.1); }
+    .status-blocked, .status-error, .status-cancelled { color: var(--blocked); border-color: rgba(240,136,62,.35); background: rgba(240,136,62,.1); }
+    .status-unknown { color: var(--text-2); border-color: var(--border); background: var(--panel-2); }
+    /* 「PASS（仅可计算）」：多重检验/成本/样本外的 PASS 只代表指标可计算，
+       用中性紫灰与真正的绿色 PASS 区分，避免“算得出”被读成“达标”。 */
+    .status-computable { color: #b7a6e3; border-color: rgba(150,120,220,.35); background: rgba(150,120,220,.12); }
+    /* 「PASS·人工解封」：FAIL/BLOCKED 经人工登记解封后的展示态，蓝色与绿色真 PASS 区分 */
+    .status-override { color: #4c9aff; border-color: rgba(76,154,255,.45); background: rgba(76,154,255,.14); }
+    .ov-act { font-size: 11px; margin-left: 4px; cursor: pointer; color: #4c9aff; text-decoration: underline; white-space: nowrap; }
+    /* 视图切换（因子特征 / 偏差控制） */
+    .view-toggle { display: flex; gap: 6px; margin: 4px 0 14px; }
+    .view-tab { padding: 7px 18px; border-radius: 6px; font-weight: 600; }
+    .view-tab.active { background: var(--accent); color: #0b0e11; }
+    .qual-yes { color: var(--up); font-weight: 600; }
+    .qual-no { color: var(--down); font-weight: 600; }
+    /* 导入因子面板 */
+    .import-panel { border: 1px solid var(--border); background: var(--panel); border-radius: 6px; padding: 10px 12px; margin: 0 0 12px; }
+    .import-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+    .import-field { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); }
+    .import-results { margin-top: 8px; font: 11px/1.8 var(--mono); max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+    .import-results:empty { display: none; }
+    .note.good { border-color: rgba(14,203,129,.3); color: var(--up); background: rgba(14,203,129,.06); }
+    .muted { color: var(--text-2); }
+    .danger-text { color: var(--down); }
+    .empty { padding: 38px 20px; text-align: center; color: var(--text-2); }
+    .empty strong { display: block; margin-bottom: 5px; color: var(--text); }
+    .pagination { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 9px 12px; color: var(--text-2); font-size: 11px; }
+    .pagination button { padding: 4px 8px; }
+
+    .drawer-mask { display: none; position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,.52); }
+    .drawer-mask.show { display: block; }
+    .drawer { position: fixed; right: 0; top: 0; z-index: 50; width: min(720px, 94vw); height: 100vh; display: flex; flex-direction: column; background: var(--panel); border-left: 1px solid var(--border); transform: translateX(100%); transition: transform .18s ease; }
+    .drawer.open { transform: translateX(0); }
+    .drawer-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; padding: 15px 17px; border-bottom: 1px solid var(--border); background: var(--panel-2); }
+    .drawer-title { font-weight: 700; }
+    .drawer-title small { display: block; margin-top: 3px; color: var(--text-2); font: 11px var(--mono); }
+    .drawer-close { padding: 3px 8px; font-size: 18px; line-height: 1; }
+    .drawer-tabs { display: flex; gap: 0; overflow-x: auto; border-bottom: 1px solid var(--border); background: var(--panel-2); }
+    .drawer-tab { flex: 0 0 auto; padding: 9px 12px; border-bottom: 2px solid transparent; color: var(--text-2); cursor: pointer; font-size: 11px; }
+    .drawer-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .drawer-body { flex: 1; overflow: auto; padding: 16px; }
+    .section { margin-bottom: 18px; }
+    .section h3 { margin: 0 0 9px; font-size: 12px; color: var(--text-2); letter-spacing: .4px; }
+    .kv { display: grid; grid-template-columns: 150px 1fr; gap: 7px 12px; font-size: 12px; }
+    .kv .k { color: var(--text-2); }
+    .kv .v { word-break: break-word; font-family: var(--mono); }
+    .detail-table { min-width: 0; font-size: 11px; }
+    .detail-table th, .detail-table td { padding: 7px 8px; }
+    .note { padding: 10px 11px; border: 1px solid rgba(240,185,11,.3); border-radius: 5px; color: var(--warn); background: rgba(240,185,11,.06); font-size: 11px; }
+    .evidence { padding: 8px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text-2); font: 11px/1.6 var(--mono); word-break: break-all; }
+    .copy-control { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; }
+    .copy-value { min-width: 0; word-break: break-all; }
+    .copy-btn { flex: 0 0 auto; padding: 2px 7px; color: var(--accent); font-size: 10px; }
+    .copy-btn:hover { color: var(--text); }
+    .drawer-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+    .footer-note { margin-top: 12px; color: var(--text-2); font-size: 11px; }
+
+    /* 评估指标 tab：指标卡片 / IC 衰减条形 / 相关性矩阵弹层 */
+    .metric-cards { display: grid; grid-template-columns: repeat(4, minmax(90px, 1fr)); gap: 8px; margin-bottom: 14px; }
+    .metric-cards .card { min-height: 62px; padding: 9px 11px; }
+    .metric-cards .card .value { font-size: 15px; }
+    .metric-cards .card .value.pos { color: var(--up); }
+    .metric-cards .card .value.neg { color: var(--down); }
+    .decay-bar { position: relative; width: 110px; height: 9px; border-radius: 3px; background: var(--bg); overflow: hidden; }
+    .decay-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; }
+    .decay-fill.pos { background: var(--up); }
+    .decay-fill.neg { background: var(--down); }
+    .warn-list { margin: 0; padding-left: 18px; color: var(--warn); font-size: 11px; }
+    .corr-modal { position: fixed; inset: 4vh 3vw; z-index: 60; display: none; flex-direction: column; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,.45); }
+    .corr-modal.open { display: flex; }
+    .corr-body { flex: 1; overflow: auto; padding: 14px 16px; }
+    .corr-meta { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; color: var(--text-2); font-size: 11px; }
+    .corr-table { border-collapse: collapse; min-width: 0; font: 9px var(--mono); }
+    .corr-table th, .corr-table td { padding: 2px 3px; border: 1px solid var(--border); white-space: nowrap; text-align: center; }
+    .corr-table thead th { position: sticky; top: 0; z-index: 3; background: var(--panel-2); }
+    .corr-table thead th.fid { writing-mode: vertical-rl; transform: rotate(180deg); min-width: 20px; max-width: 24px; height: 88px; vertical-align: bottom; font-weight: 400; }
+    .corr-table tbody th { position: sticky; left: 0; z-index: 2; background: var(--panel-2); text-align: right; font-weight: 400; max-width: 90px; overflow: hidden; text-overflow: ellipsis; }
+    .corr-table thead th.corner { left: 0; z-index: 4; }
+    .corr-table td.corr-diag { color: var(--idle); }
+    .corr-legend { display: inline-flex; gap: 10px; align-items: center; }
+    .corr-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+    .toast { position: fixed; right: 18px; bottom: 18px; z-index: 70; display: none; max-width: min(480px, 90vw); padding: 10px 13px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel-2); box-shadow: 0 5px 22px rgba(0,0,0,.35); }
+    .toast.show { display: block; }
+    .toast.error { color: var(--down); border-color: rgba(246,70,93,.4); }
+    .toast.warn { color: var(--warn); border-color: rgba(240,185,11,.4); }
+
+    @media (max-width: 1120px) {
+      .cards { grid-template-columns: repeat(4, minmax(130px, 1fr)); }
+      .page-head { flex-direction: column; }
+      .head-actions { justify-content: flex-start; }
+    }
+    @media (max-width: 640px) {
+      header { padding: 0 10px; }
+      .brand small { display: none; }
+      .top-nav a { padding: 6px 7px; }
+      .page { padding: 16px 10px 30px; }
+      .cards { grid-template-columns: repeat(2, minmax(130px, 1fr)); }
+      .toolbar input, .toolbar select { width: 100%; }
+      .kv { grid-template-columns: 1fr; gap: 3px; }
+      .kv .v { margin-bottom: 6px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand"><span>📊 CryptoPaperLab</span><small>因子库</small></div>
+    <div class="header-clocks" aria-label="时间对照">
+      <span class="clock"><b>UTC</b> <span class="mono" id="clock-utc">—</span></span>
+      <span class="clock"><b>SIN</b> <span class="mono" id="clock-sin">—</span> <small>(+8)</small></span>
+    </div>
+    <nav class="top-nav" aria-label="主导航">
+      <a href="/" target="_self">🏠 主项目</a>
+      <a href="/explorer" target="_self">🔍 探索</a>
+      <a href="/bias-control.html" class="active" aria-current="page">📚 因子库</a>
+      <a href="/about.html" target="_self">ℹ 关于</a>
+    </nav>
+  </header>
+
+  <main class="page">
+    <div class="page-head">
+      <div>
+        <h1>因子库</h1>
+        <p class="subtitle">默认展示因子特征（评估指标：IC/RankIC/ICIR/衰减/分层/换手；判定列 = 是否成功导入）；可切换到偏差控制视图查看五类偏差检查与人工解封。</p>
+      </div>
+      <div class="head-actions">
+        <button id="btn-import" title="导入因子：文档(.md) + 实现(.py) 成对，支持批量">📥 导入因子</button>
+        <button id="btn-refresh">刷新</button>
+        <button id="btn-corr-matrix" title="库级因子日频 Spearman 相关性矩阵（后端真实计算）">相关性矩阵</button>
+        <button id="btn-download-md" disabled>下载检查报告</button>
+        <button id="btn-download-csv" disabled>CSV 报告</button>
+        <button id="btn-export-json" disabled title="本地导出当前筛选行">导出 JSON</button>
+        <button id="btn-export-csv" disabled title="本地导出当前筛选行">导出 CSV</button>
+      </div>
+    </div>
+
+    <section id="import-panel" class="import-panel" style="display:none" aria-label="导入因子">
+      <div class="import-row">
+        <label class="import-field">因子文档（.md，可多选）<input id="import-mds" type="file" multiple accept=".md"></label>
+        <label class="import-field">实现文件（.py，可多选）<input id="import-pys" type="file" multiple accept=".py"></label>
+        <button id="btn-import-run" disabled>开始导入</button>
+      </div>
+      <div class="toolbar-note" style="margin-top:6px;">
+        因子 = 文档(.md) + 实现(.py) 成对导入：按 MD 声明的 implementation 文件名自动配对（同名主干兜底）。
+        未配对到实现的 MD 会被后端拒收并提示。导入成功即注册并后台预计算评估指标，进「未检查」。<br>
+        <strong>每批最多 10 个因子</strong>：每个因子导入后都会后台预计算指标，一批太多会抢占数据库导致页面变卡；超过 10 个请分批导入。
+      </div>
+      <div id="import-results" class="import-results"></div>
+    </section>
+
+    <div class="view-toggle" role="tablist" aria-label="视图切换">
+      <button id="view-tab-features" class="view-tab active" role="tab" aria-selected="true">因子特征</button>
+      <button id="view-tab-bias" class="view-tab" role="tab" aria-selected="false">偏差控制</button>
+    </div>
+
+    <div id="view-features-content">
+      <section class="cards" aria-label="因子特征概览">
+        <div class="card"><div class="label">因子总数</div><div class="value" id="feat-total">—</div></div>
+        <div class="card"><div class="label">已评估</div><div class="value" id="feat-evaluated">—</div></div>
+        <div class="card"><div class="label">导入成功</div><div class="value" id="feat-qualified">—</div></div>
+        <div class="card"><div class="label">导入失败</div><div class="value" id="feat-unqualified">—</div></div>
+        <div class="card"><div class="label">未评估</div><div class="value" id="feat-noteval">—</div></div>
+      </section>
+      <div class="toolbar-note" style="margin:8px 0;">指标为开发集深度评估口径（只读缓存，不现场重算）；未评估因子在探索页导入后自动预计算，或打开详情「评估指标」按需计算。</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>因子 ID</th><th>名称</th><th>因子状态</th><th>RankIC</th><th>ICIR</th>
+              <th>p-value</th><th>衰减比</th><th>分层单调</th><th>多空差</th><th>换手率</th>
+              <th>成功导入判定</th><th>评估时间</th><th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="features-tbody"></tbody>
+        </table>
+        <div id="features-empty" class="empty" style="display:none"></div>
+      </div>
+    </div>
+
+    <div id="view-bias-content" style="display:none">
+
+    <div id="api-banner" class="banner info" role="status">
+      <span>ⓘ</span><p><strong>后端接口未接入。</strong>当前页面不会使用假数据推断 PASS；接入 bias-control API 后，刷新即可加载真实结果。</p>
+    </div>
+    <div id="error-banner" class="banner error" role="alert"><span>!</span><p id="error-text"></p></div>
+    <div id="run-banner" class="banner warn" role="status"><span>⚠</span><p id="run-text"></p></div>
+
+    <section class="cards" aria-label="偏差控制概览">
+      <div class="card"><div class="label">因子总数</div><div class="value" id="sum-total">—</div></div>
+      <div class="card"><div class="label">已检查</div><div class="value" id="sum-checked">—</div></div>
+      <div class="card"><div class="label">检查通过</div><div class="value" id="sum-pass">—</div></div>
+      <div class="card"><div class="label">检查失败</div><div class="value" id="sum-fail">—</div></div>
+      <div class="card"><div class="label">未检查/无法检查</div><div class="value" id="sum-unknown">—</div></div>
+      <div class="card"><div class="label">最近一次运行</div><div class="value small" id="sum-last-run">—</div></div>
+      <div class="card"><div class="label">当前开发集区间（UTC）</div><div class="value small" id="sum-dev-window">—</div></div>
+      <div class="card"><div class="label">锁定样本外区间（UTC）</div><div class="value small" id="sum-oos-window">—</div></div>
+    </section>
+
+    <section class="workspace" aria-label="因子偏差控制清单">
+      <div class="toolbar">
+        <input id="filter-factor" type="search" placeholder="按因子 ID 搜索…" autocomplete="off">
+        <select id="filter-library" aria-label="按因子库筛选"><option value="">全部因子库</option></select>
+        <select id="filter-category" aria-label="按类别筛选"><option value="">全部类别</option></select>
+        <select id="filter-status" aria-label="按总体状态筛选"><option value="">全部状态</option><option value="PASS">PASS</option><option value="FAIL">FAIL</option><option value="NOT_CHECKED">NOT_CHECKED</option><option value="RUNNING">RUNNING</option><option value="BLOCKED">BLOCKED</option><option value="ERROR">ERROR</option><option value="CANCELLED">CANCELLED</option></select>
+        <select id="filter-bias" aria-label="按偏差类型筛选">
+          <option value="">全部偏差类型</option>
+          <option value="lookahead">前视偏差</option>
+          <option value="full_sample">全样本泄露</option>
+          <option value="multiple_testing">多重检验</option>
+          <option value="overfit">参数过拟合</option>
+          <option value="cost">成本假设</option>
+          <option value="oos">锁定样本外</option>
+        </select>
+        <select id="filter-run" aria-label="按运行批次筛选"><option value="">全部运行批次</option></select>
+        <select id="filter-oos" aria-label="按样本外状态筛选"><option value="">全部样本外状态</option><option value="RUNNED">已运行</option><option value="NOT_RUN">未运行</option><option value="LOCKED">已锁定</option></select>
+        <span class="spacer"></span>
+        <label class="check-label"><input id="filter-failed" type="checkbox"> 只显示失败项</label>
+        <label class="check-label"><input id="filter-not-checked" type="checkbox"> 只显示未检查项</label>
+        <div class="toolbar-note">状态以后台返回为准；缺少状态时显示 NOT_CHECKED，不自动判定为通过。</div>
+      </div>
+
+      <div class="run-panel">
+        <button class="btn-danger" id="btn-cancel-run" disabled aria-label="终止正在运行的因子库检查">终止检查</button>
+        <button id="btn-latest-run">查看最近运行</button>
+        <span class="run-summary" id="run-summary">尚未加载运行状态</span>
+        <div class="toolbar-note" id="run-scope-note">因子逐个导入：导入成功即自动预计算评估指标；五查由用户在探索页逐因子选择「自动偏差检查」或「人工检查」。本页为结果总览与人工解封，不提供全库批量检查入口。</div>
+        <div class="run-progress" id="run-progress">
+          <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+          <div class="progress-text" id="progress-text">—</div>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th><button data-sort="factor_id">因子 ID ↕</button></th>
+              <th><button data-sort="library">因子库 ↕</button></th>
+              <th><button data-sort="category">因子类别 ↕</button></th>
+              <th><button data-sort="overall_status">总体状态 ↕</button></th>
+              <th>前视偏差</th>
+              <th>全样本泄露</th>
+              <th>多重检验</th>
+              <th>参数过拟合</th>
+              <th>成本假设</th>
+              <th>样本外状态</th>
+              <th><button data-sort="checked_at">最近检查时间 ↕</button></th>
+              <th>失败原因</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="factor-tbody"></tbody>
+        </table>
+        <div id="table-empty" class="empty" style="display:none"></div>
+      </div>
+      <div class="pagination">
+        <button id="page-prev">上一页</button>
+        <span id="page-info">—</span>
+        <button id="page-next">下一页</button>
+        <select id="page-size" aria-label="每页数量"><option>25</option><option>50</option><option>100</option></select>
+      </div>
+    </section>
+    </div>
+  </main>
+
+  <div class="drawer-mask" id="drawer-mask"></div>
+  <aside class="drawer" id="detail-drawer" aria-label="因子偏差控制详情" aria-hidden="true">
+    <div class="drawer-head">
+      <div class="drawer-title" id="drawer-title">偏差控制详情<small>—</small></div>
+      <button class="drawer-close" id="drawer-close" aria-label="关闭详情">×</button>
+    </div>
+    <div class="drawer-tabs" id="drawer-tabs" role="tablist">
+      <div class="drawer-tab active" data-detail-tab="lookahead" role="tab" tabindex="0">前视检查</div>
+      <div class="drawer-tab" data-detail-tab="full_sample" role="tab" tabindex="0">全样本泄露</div>
+      <div class="drawer-tab" data-detail-tab="multiple_testing" role="tab" tabindex="0">多重检验</div>
+      <div class="drawer-tab" data-detail-tab="overfit" role="tab" tabindex="0">参数过拟合</div>
+      <div class="drawer-tab" data-detail-tab="cost" role="tab" tabindex="0">成本假设</div>
+      <div class="drawer-tab" data-detail-tab="metrics" role="tab" tabindex="0">评估指标</div>
+      <div class="drawer-tab" data-detail-tab="oos" role="tab" tabindex="0">样本外</div>
+    </div>
+    <div class="drawer-body" id="drawer-body"></div>
+  </aside>
+  <div class="drawer-mask" id="corr-mask"></div>
+  <div class="corr-modal" id="corr-modal" role="dialog" aria-modal="true" aria-label="因子相关性矩阵" aria-hidden="true">
+    <div class="drawer-head">
+      <div class="drawer-title" id="corr-title">因子相关性矩阵<small>—</small></div>
+      <button class="drawer-close" id="corr-close" aria-label="关闭相关性矩阵">×</button>
+    </div>
+    <div class="corr-body" id="corr-body"></div>
+  </div>
+  <div class="toast" id="toast" role="status"></div>
+
+  <script>
+    const CHECKS = [
+      ['lookahead', '前视偏差'],
+      ['full_sample', '全样本泄露'],
+      ['multiple_testing', '多重检验'],
+      ['overfit', '参数过拟合'],
+      ['cost', '成本假设'],
+    ];
+    const STATUS_LABELS = {
+      PASS: 'PASS', FAIL: 'FAIL', NOT_CHECKED: 'NOT_CHECKED', RUNNING: 'RUNNING',
+      BLOCKED: 'BLOCKED', ERROR: 'ERROR', CANCELLED: 'CANCELLED', LOCKED: 'LOCKED', UNKNOWN: '未返回状态',
+    };
+    const state = {
+      available: false,
+      overview: null,
+      rows: [],
+      filters: { factor: '', library: '', category: '', status: '', bias: '', run: '', oos: '', failed: false, notChecked: false },
+      sort: { key: 'factor_id', dir: 'asc' },
+      page: 1,
+      pageSize: 25,
+      selectedId: null,
+      detail: null,
+      detailTab: 'lookahead',
+      detailLoading: false,
+      latestRun: null,
+      running: false,
+      runTimer: null,
+      runToken: 0,
+      canceling: false,
+      oosRunSubmitted: false,
+      metrics: null,
+      metricsFor: null,
+      metricsLoading: false,
+      metricsError: '',
+      corr: null,
+      corrLoading: false,
+      corrError: '',
+      lastError: '',
+      overrides: {},
+    };
+
+    const biasControlApi = {
+      async request(path, options = {}) {
+        const response = await fetch(path, { headers: { 'Accept': 'application/json' }, ...options });
+        if (!response.ok) {
+          const body = await response.text().catch(() => '');
+          const error = new Error(`HTTP ${response.status}${body ? `: ${body.slice(0, 180)}` : ''}`);
+          error.status = response.status;
+          throw error;
+        }
+        const type = response.headers.get('content-type') || '';
+        return type.includes('application/json') ? response.json() : response.text();
+      },
+      overview: () => biasControlApi.request('/api/admin/bias-control/overview'),
+      factors: () => biasControlApi.request('/api/admin/bias-control/factors'),
+      detail: (id) => biasControlApi.request(`/api/admin/bias-control/factors/${encodeURIComponent(id)}`),
+      startCheck: (scope, factorIds) => biasControlApi.request('/api/admin/bias-control/lookahead-check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scope, factor_ids: factorIds || [] }),
+      }),
+      run: (id) => biasControlApi.request(`/api/admin/bias-control/runs/${encodeURIComponent(id)}`),
+      cancelRun: (id) => biasControlApi.request(`/api/admin/bias-control/runs/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
+      report: (id, format) => biasControlApi.request(`/api/admin/bias-control/runs/${encodeURIComponent(id)}/report?format=${encodeURIComponent(format)}`),
+      metrics: (id, format, refresh) => {
+        const params = [];
+        if (format) params.push(`format=${encodeURIComponent(format)}`);
+        if (refresh) params.push('refresh=1');
+        return biasControlApi.request(`/api/admin/bias-control/factors/${encodeURIComponent(id)}/metrics${params.length ? `?${params.join('&')}` : ''}`);
+      },
+      deleteFactor: (id) => biasControlApi.request(`/api/registry/factors/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+      correlationMatrix: (format) => biasControlApi.request(`/api/admin/bias-control/correlation-matrix${format ? `?format=${encodeURIComponent(format)}` : ''}`),
+      checkOverrides: () => biasControlApi.request('/api/factors/check-overrides'),
+      qualification: () => biasControlApi.request('/api/admin/bias-control/qualification'),
+      runFactorCheck: (id) => biasControlApi.request(`/api/factors/${encodeURIComponent(id)}/run-check`, { method: 'POST' }),
+      setOverride: (id, checkName, operator, reason) => biasControlApi.request(`/api/factors/${encodeURIComponent(id)}/override`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ check_name: checkName, operator, reason }),
+      }),
+      revokeOverride: (id, checkName) => biasControlApi.request(`/api/factors/${encodeURIComponent(id)}/override/revoke`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ check_name: checkName }),
+      }),
+    };
+
+    function unwrap(payload) {
+      if (payload && payload.data && typeof payload.data === 'object') return payload.data;
+      return payload && typeof payload === 'object' ? payload : {};
+    }
+    function rowId(row) { return row ? (row.factor_id ?? row.id ?? row.factorId ?? '') : ''; }
+    function valueOf(obj, keys, fallback = null) {
+      if (!obj || typeof obj !== 'object') return fallback;
+      for (const key of keys) if (obj[key] !== undefined && obj[key] !== null) return obj[key];
+      return fallback;
+    }
+    function rawStatus(value) {
+      if (value && typeof value === 'object') value = value.status;
+      const s = String(value ?? '').toUpperCase();
+      return Object.prototype.hasOwnProperty.call(STATUS_LABELS, s) ? s : (s ? 'UNKNOWN' : 'NOT_CHECKED');
+    }
+    function statusBadge(value, note, ov) {
+      const status = rawStatus(value);
+      // 人工解封：FAIL/BLOCKED 经登记后展示为蓝色 PASS，原始判定留档（hover 可见）。
+      if (ov) {
+        const title = `人工解封（原状态 ${ov.original_status}，操作人 ${ov.operator}${ov.reason ? `，理由：${ov.reason}` : ''}${ov.created_at ? `，${ov.created_at}` : ''}）`;
+        return `<span class="badge status status-override" title="${escapeHtml(title)}">PASS·人工解封</span>`;
+      }
+      // PASS + note = “仅可计算”型通过（多重检验/成本/样本外）：渲染中性徽章，
+      // hover 可见后端 note 说明，不再裸显示绿色 PASS。
+      if (status === 'PASS' && note) {
+        return `<span class="badge status status-computable" title="${escapeHtml(String(note))}">PASS（仅可计算）</span>`;
+      }
+      return `<span class="badge status status-${status.toLowerCase()}" title="${escapeHtml(STATUS_LABELS[status])}">${escapeHtml(STATUS_LABELS[status])}</span>`;
+    }
+    // 人工解封（覆盖层）：state.overrides = factor_id -> check_name -> {operator, reason, original_status, created_at}
+    function ovOf(rowOrId, key) {
+      const id = typeof rowOrId === 'string' ? rowOrId : rowId(rowOrId);
+      const map = state.overrides[id];
+      return map && map[key] ? map[key] : null;
+    }
+    function dispOverall(row) { return ovOf(row, 'overall') ? 'PASS' : overallStatus(row); }
+    function dispCheck(row, key) { return ovOf(row, key) ? 'PASS' : checkStatus(row, key); }
+    function dispOos(row) { return ovOf(row, 'out_of_sample') ? 'PASS' : oosStatus(row); }
+    // 列表徽章单元格：已解封 → 蓝徽章+撤销；FAIL/BLOCKED → 原徽章+解封入口；其余原样
+    function badgeWithOverride(id, key, raw, note) {
+      const ov = ovOf(id, key);
+      if (ov) {
+        return `${statusBadge('PASS', null, ov)}<a class="ov-act" data-f="${escapeHtml(id)}" data-k="${key}" data-act="revoke" title="撤销人工解封，恢复原状态">撤销</a>`;
+      }
+      const status = rawStatus(raw);
+      if (status === 'FAIL' || status === 'BLOCKED') {
+        return `${statusBadge(status, note)}<a class="ov-act" data-f="${escapeHtml(id)}" data-k="${key}" data-act="override" title="人工解封：登记操作人后展示为「PASS·人工解封」（原始判定留档）">解封</a>`;
+      }
+      return statusBadge(raw, note);
+    }
+    // 这三类检查的 PASS 只表示“指标可计算”，不代表显著/盈利等实质结论；
+    // 后端在这三类检查的 PASS 结果里附带 note 字段，前端据此降级徽章。
+    // lookahead/full_sample/overfit 的 PASS 是真判定，保持原样。
+    const COMPUTATIONAL_PASS_CHECKS = ['multiple_testing', 'cost', 'oos'];
+    function checkNote(row, key) {
+      if (!COMPUTATIONAL_PASS_CHECKS.includes(key)) return null;
+      const check = checkValue(row, key);
+      return check && typeof check === 'object' ? valueOf(check, ['note']) : null;
+    }
+    function oosNote(row) {
+      const oos = oosValue(row);
+      return oos && typeof oos === 'object' ? valueOf(oos, ['note']) : null;
+    }
+    function overallStatus(row) {
+      const backendStatus = rawStatus(valueOf(row, ['overall_status', 'overallStatus', 'overall', 'status']));
+      // Keep the backend result authoritative; only block an inconsistent PASS
+      // when a concrete returned check is FAIL. Missing statuses remain NOT_CHECKED.
+      const hasFailedCheck = CHECKS.some(([key]) => checkStatus(row, key) === 'FAIL') || oosStatus(row) === 'FAIL';
+      return backendStatus === 'PASS' && hasFailedCheck ? 'FAIL' : backendStatus;
+    }
+    function checksOf(row) { return valueOf(row, ['checks', 'bias_checks', 'biasChecks'], {}) || {}; }
+    function checkValue(row, key) {
+      const checks = checksOf(row);
+      const aliases = {
+        lookahead: ['lookahead', 'forward_check', 'front_check'],
+        full_sample: ['full_sample', 'fullSample', 'leakage'],
+        multiple_testing: ['multiple_testing', 'multipleTesting', 'multiple_test'],
+        overfit: ['overfit', 'parameter_overfit', 'parameterOverfit'],
+        cost: ['cost', 'cost_assumption', 'costAssumption'],
+      }[key] || [key];
+      for (const name of aliases) if (checks[name] !== undefined) return checks[name];
+      return null;
+    }
+    function checkStatus(row, key) {
+      const v = checkValue(row, key);
+      return rawStatus(v && typeof v === 'object' ? v.status : v);
+    }
+    function oosValue(row) { return valueOf(row, ['oos', 'out_of_sample', 'outOfSample', 'sample_out'], {}) || {}; }
+    function oosStatus(row) {
+      const oos = oosValue(row);
+      return rawStatus(valueOf(oos, ['status', 'overall_status', 'result']));
+    }
+    function formatUtc(value) {
+      if (!value) return '—';
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? String(value) : date.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC');
+    }
+    function formatRange(value) {
+      if (!value) return '—';
+      if (typeof value === 'string') return value;
+      const start = value.start ?? value.from ?? value.begin;
+      const end = value.end ?? value.to ?? value.finish;
+      if (!start && !end) return '—';
+      return `${formatUtc(start)} → ${formatUtc(end)}`;
+    }
+    function formatMetric(value, digits = 4) {
+      if (value === null || value === undefined || value === '') return '—';
+      if (typeof value === 'number') return Number.isFinite(value) ? value.toFixed(digits) : '—';
+      return String(value);
+    }
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    function debounce(fn, wait) {
+      let timer = null;
+      return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), wait); };
+    }
+    function copyControl(value, label) {
+      if (value === null || value === undefined || value === '') return '—';
+      const text = String(value);
+      return `<span class="copy-control"><span class="copy-value">${escapeHtml(text)}</span><button type="button" class="copy-btn" data-copy-value="${escapeHtml(text)}" aria-label="${escapeHtml(label)}">复制</button></span>`;
+    }
+    async function copyValue(value) {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(value);
+        else {
+          const input = document.createElement('textarea');
+          input.value = value;
+          input.style.position = 'fixed';
+          input.style.opacity = '0';
+          document.body.appendChild(input);
+          input.select();
+          document.execCommand('copy');
+          input.remove();
+        }
+        showToast('已复制到剪贴板。');
+      } catch (error) {
+        showToast(`复制失败：${error.message || error}`, 'error');
+      }
+    }
+    function csvCell(value) {
+      const text = String(value ?? '');
+      return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    }
+    function showToast(message, kind = '') {
+      const el = document.getElementById('toast');
+      el.textContent = message;
+      el.className = `toast show ${kind}`;
+      clearTimeout(showToast.timer);
+      showToast.timer = setTimeout(() => { el.className = 'toast'; }, 3600);
+    }
+    function setBanner(id, message, show, kind) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.className = `banner ${kind || ''}${show ? ' show' : ''}`;
+      const p = el.querySelector('p');
+      if (p) p.innerHTML = message;
+    }
+
+    function applyOverview(payload) {
+      const data = unwrap(payload);
+      state.overview = data;
+      state.available = data.available !== false;
+      const rows = valueOf(data, ['factors', 'items', 'rows'], null);
+      if (Array.isArray(rows)) state.rows = rows;
+      state.latestRun = valueOf(data, ['latest_run', 'latestRun', 'run'], null);
+      state.lastError = '';
+      setBanner('api-banner', '', false);
+      setBanner('error-banner', '', false);
+    }
+
+    async function loadOverrides() {
+      try {
+        const payload = await biasControlApi.checkOverrides();
+        state.overrides = valueOf(payload, ['overrides'], {}) || {};
+      } catch (error) {
+        state.overrides = {};  // 解封服务不可用时按无覆盖展示，不阻断主流程
+      }
+    }
+
+    // ---------- 因子特征视图（默认）：只读 metrics 缓存的指标 + 成功导入判定 ----------
+    function switchView(name) {
+      const features = name === 'features';
+      document.getElementById('view-features-content').style.display = features ? '' : 'none';
+      document.getElementById('view-bias-content').style.display = features ? 'none' : '';
+      document.getElementById('view-tab-features').classList.toggle('active', features);
+      document.getElementById('view-tab-bias').classList.toggle('active', !features);
+      document.getElementById('view-tab-features').setAttribute('aria-selected', String(features));
+      document.getElementById('view-tab-bias').setAttribute('aria-selected', String(!features));
+      if (features) loadFeatures();
+    }
+
+    async function loadFeatures() {
+      const tbody = document.getElementById('features-tbody');
+      const empty = document.getElementById('features-empty');
+      try {
+        const payload = await biasControlApi.qualification();
+        const summary = valueOf(payload, ['summary'], {}) || {};
+        const entries = valueOf(payload, ['entries'], []) || [];
+        // 概览卡：导入成功/失败按注册表校验结果统计（与指标评估正交）
+        const importOk = entries.filter(e => e.registered !== false).length;
+        document.getElementById('feat-total').textContent = summary.total ?? '—';
+        document.getElementById('feat-evaluated').textContent = summary.evaluated ?? '—';
+        document.getElementById('feat-qualified').textContent = importOk;
+        document.getElementById('feat-unqualified').textContent = entries.length - importOk;
+        document.getElementById('feat-noteval').textContent = summary.not_evaluated ?? '—';
+        if (!entries.length) {
+          tbody.innerHTML = '';
+          empty.style.display = '';
+          empty.innerHTML = '<strong>因子库为空</strong>从探索页上传因子（MD + 实现 .py 成对），导入成功即自动预计算指标。';
+          return;
+        }
+        empty.style.display = 'none';
+        tbody.innerHTML = entries.map(e => {
+          const notEval = e.evaluation !== 'evaluated';
+          // 成功导入判定：注册表校验是否通过；失败时展示校验错误明细
+          const imported = e.registered !== false;
+          const qual = imported
+            ? '<span class="qual-yes">✅ 成功</span>'
+            : '<span class="qual-no">❌ 失败</span>';
+          const mono = notEval ? '—' : (e.is_monotonic ? '是' : '否');
+          const cell = (v) => (notEval || v == null) ? '<span class="muted">—</span>' : escapeHtml(formatMetric(v));
+          return `<tr>
+            <td>${escapeHtml(e.factor_id || '—')}</td>
+            <td>${escapeHtml(e.name || '—')}</td>
+            <td>${escapeHtml(e.factor_status || '—')}</td>
+            <td class="mono">${cell(e.rank_ic)}</td>
+            <td class="mono">${cell(e.icir)}</td>
+            <td class="mono">${cell(e.p_value)}</td>
+            <td class="mono">${cell(e.decay_ratio)}</td>
+            <td>${mono}</td>
+            <td class="mono">${cell(e.long_short)}</td>
+            <td class="mono">${cell(e.turnover)}</td>
+            <td>${qual}${!imported && (e.import_errors || []).length ? `<div class="muted" style="font-size:11px;">${escapeHtml(e.import_errors.join('；'))}</div>` : ''}</td>
+            <td class="mono">${escapeHtml(formatUtc(e.metrics_computed_at))}</td>
+            <td><button class="row-check" data-open-metrics="${escapeHtml(e.factor_id || '')}" title="打开详情「评估指标」tab，按需计算该因子的开发集评估指标">计算指标</button>
+                <button class="row-check" data-delete-factor="${escapeHtml(e.factor_id || '')}" title="下架该因子：文件移入 factor_trash/（可恢复），注册表即时离册，评估缓存一并清理">删除</button></td>
+          </tr>`;
+        }).join('');
+      } catch (error) {
+        tbody.innerHTML = '';
+        empty.style.display = '';
+        empty.innerHTML = `<strong>因子特征加载失败</strong> ${escapeHtml(String(error.message || error))}`;
+      }
+    }
+
+    async function loadOverview() {
+      try {
+        const payload = await biasControlApi.overview();
+        applyOverview(payload);
+        if (!Array.isArray(valueOf(unwrap(payload), ['factors', 'items', 'rows'], null))) {
+          try {
+            const factorPayload = await biasControlApi.factors();
+            const factorData = unwrap(factorPayload);
+            const rows = valueOf(factorData, ['factors', 'items', 'rows'], factorData);
+            if (Array.isArray(rows)) state.rows = rows;
+          } catch (error) {
+            if (error.status !== 404) throw error;
+          }
+        }
+        await loadOverrides();
+        renderAll();
+      } catch (error) {
+        state.available = false;
+        // Keep the last valid overview/rows visible while showing the error.
+        state.lastError = String(error.message || error);
+        const missing = error.status === 404 || error.status === 405;
+        setBanner('api-banner', '<strong>后端接口未接入。</strong>当前页面不会使用假数据推断 PASS；接入 bias-control API 后，刷新即可加载真实结果。', missing, 'info');
+        setBanner('error-banner', `<strong>偏差控制数据加载失败。</strong> ${escapeHtml(state.lastError)}`, !missing, 'error');
+        renderAll();
+      }
+    }
+
+    function renderSummary() {
+      const data = state.overview || {};
+      const summary = valueOf(data, ['summary', 'stats', 'statistics'], {}) || {};
+      const set = (id, keys, formatter = (v) => v ?? '—') => {
+        const value = valueOf(summary, keys, valueOf(data, keys, null));
+        document.getElementById(id).textContent = formatter(value);
+      };
+      set('sum-total', ['total_factors', 'factor_total', 'total']);
+      set('sum-checked', ['checked_count', 'checked']);
+      set('sum-pass', ['pass_count', 'passed_count', 'passed']);
+      set('sum-fail', ['fail_count', 'failed_count', 'failed']);
+      set('sum-unknown', ['not_checked_count', 'unknown_count', 'blocked_count', 'not_checked']);
+      set('sum-last-run', ['last_run_at', 'latest_run_at', 'checked_at'], formatUtc);
+      set('sum-dev-window', ['development_window', 'dev_window'], formatRange);
+      set('sum-oos-window', ['oos_window', 'out_of_sample_window'], formatRange);
+    }
+
+    function optionValues(selector, values, firstText) {
+      const select = document.getElementById(selector);
+      const current = select.value;
+      const clean = [...new Set(values.filter(v => v !== null && v !== undefined && String(v) !== '').map(String))].sort((a, b) => a.localeCompare(b, 'zh'));
+      select.innerHTML = `<option value="">${firstText}</option>` + clean.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+      if (clean.includes(current)) select.value = current;
+    }
+    function renderFilterOptions() {
+      optionValues('filter-library', state.rows.map(r => valueOf(r, ['library', 'source', 'lib'])), '全部因子库');
+      optionValues('filter-category', state.rows.map(r => valueOf(r, ['category', 'factor_category'])), '全部类别');
+      const runs = state.rows.map(r => valueOf(r, ['run_id', 'runId', 'batch_id'])).filter(Boolean);
+      const latest = state.latestRun && valueOf(state.latestRun, ['run_id', 'runId', 'id']);
+      if (latest) runs.push(latest);
+      optionValues('filter-run', runs, '全部运行批次');
+    }
+    function getFilteredRows() {
+      const f = state.filters;
+      let rows = state.rows.filter(row => {
+        const id = String(rowId(row)).toLowerCase();
+        const factorOk = !f.factor || id.includes(f.factor.toLowerCase());
+        const libraryOk = !f.library || String(valueOf(row, ['library', 'source', 'lib'], '')).toLowerCase() === f.library.toLowerCase();
+        const categoryOk = !f.category || String(valueOf(row, ['category', 'factor_category'], '')).toLowerCase() === f.category.toLowerCase();
+        const statusOk = !f.status || dispOverall(row) === f.status;
+        const runOk = !f.run || String(valueOf(row, ['run_id', 'runId', 'batch_id'], '')) === f.run;
+        const oosOk = !f.oos || (f.oos === 'RUNNED' ? ['PASS', 'FAIL', 'ERROR'].includes(dispOos(row)) : f.oos === 'NOT_RUN' ? dispOos(row) === 'NOT_CHECKED' : dispOos(row) === 'LOCKED');
+        const biasOk = !f.bias || dispCheck(row, f.bias) === 'FAIL';
+        const failedOk = !f.failed || [dispOverall(row), ...CHECKS.map(([key]) => dispCheck(row, key)), dispOos(row)].some(s => ['FAIL', 'ERROR', 'BLOCKED'].includes(s));
+        const notCheckedOk = !f.notChecked || [dispOverall(row), ...CHECKS.map(([key]) => dispCheck(row, key)), dispOos(row)].some(s => ['NOT_CHECKED', 'UNKNOWN'].includes(s));
+        return factorOk && libraryOk && categoryOk && statusOk && runOk && oosOk && biasOk && failedOk && notCheckedOk;
+      });
+      const key = state.sort.key;
+      const value = (row) => key === 'factor_id' ? rowId(row) : key === 'overall_status' ? dispOverall(row) : valueOf(row, [key], '');
+      rows.sort((a, b) => {
+        const av = value(a); const bv = value(b);
+        const cmp = String(av ?? '').localeCompare(String(bv ?? ''), 'zh', { numeric: true });
+        return state.sort.dir === 'asc' ? cmp : -cmp;
+      });
+      return rows;
+    }
+
+    function renderTable() {
+      const all = getFilteredRows();
+      const totalPages = Math.max(1, Math.ceil(all.length / state.pageSize));
+      state.page = Math.min(state.page, totalPages);
+      const start = (state.page - 1) * state.pageSize;
+      const rows = all.slice(start, start + state.pageSize);
+      const tbody = document.getElementById('factor-tbody');
+      const empty = document.getElementById('table-empty');
+      if (!state.available && !state.rows.length) {
+        tbody.innerHTML = '';
+        empty.style.display = '';
+        empty.innerHTML = '<strong>暂未加载偏差控制数据</strong>后端接口未接入或当前不可用；页面不会把空数据显示为 PASS。';
+      } else if (!rows.length) {
+        tbody.innerHTML = '';
+        empty.style.display = '';
+        empty.innerHTML = '<strong>没有匹配项</strong>请调整筛选条件。';
+      } else {
+        empty.style.display = 'none';
+        tbody.innerHTML = rows.map(row => {
+          const id = String(rowId(row));
+          const failure = valueOf(row, ['failure_reason', 'failureReason', 'reason', 'error_message'], '—');
+          return `<tr tabindex="0" data-factor-id="${escapeHtml(id)}">
+            <td><button class="factor-link" data-open-factor="${escapeHtml(id)}">${escapeHtml(id || '—')}</button></td>
+            <td>${escapeHtml(valueOf(row, ['library', 'source', 'lib'], '—'))}</td>
+            <td>${escapeHtml(valueOf(row, ['category', 'factor_category'], '—'))}</td>
+            <td>${badgeWithOverride(id, 'overall', overallStatus(row))}</td>
+            ${CHECKS.map(([key]) => `<td>${badgeWithOverride(id, key, checkStatus(row, key), checkNote(row, key))}</td>`).join('')}
+            <td>${badgeWithOverride(id, 'out_of_sample', oosStatus(row), oosNote(row))}</td>
+            <td class="mono">${escapeHtml(formatUtc(valueOf(row, ['checked_at', 'last_checked_at', 'updated_at'])))}</td>
+            <td class="${['FAIL','ERROR','BLOCKED'].includes(dispOverall(row)) ? 'danger-text' : 'muted'}" title="${escapeHtml(failure)}">${escapeHtml(failure)}</td>
+            <td><button class="row-check" data-run-check="${escapeHtml(id)}" ${state.running ? 'disabled' : ''} title="后台运行开发集五类偏差检查（前视/全样本泄露/多重检验/过拟合/成本），单因子可能耗时数分钟，完成后自动回写「已检查·自动」">自动五查</button></td>
+          </tr>`;
+        }).join('');
+      }
+      document.getElementById('page-info').textContent = `${all.length ? start + 1 : 0}-${Math.min(start + rows.length, all.length)} / ${all.length}`;
+      document.getElementById('page-prev').disabled = state.page <= 1;
+      document.getElementById('page-next').disabled = state.page >= totalPages;
+      const canExport = Boolean(all.length && state.available);
+      document.getElementById('btn-export-json').disabled = !canExport;
+      document.getElementById('btn-export-csv').disabled = !canExport;
+    }
+
+    function renderRunState() {
+      const run = state.latestRun || {};
+      const status = rawStatus(valueOf(run, ['status', 'state']));
+      const progress = valueOf(run, ['progress'], {}) || {};
+      const done = Number(valueOf(progress, ['completed', 'done'], valueOf(run, ['completed', 'done'], 0))) || 0;
+      const total = Number(valueOf(progress, ['total', 'total_tasks'], valueOf(run, ['total', 'total_tasks'], 0))) || 0;
+      const percent = total ? Math.min(100, Math.round(done / total * 100)) : 0;
+      const progressEl = document.getElementById('run-progress');
+      progressEl.classList.toggle('show', state.running || status === 'RUNNING');
+      document.getElementById('progress-fill').style.width = `${percent}%`;
+      const passed = valueOf(progress, ['passed', 'pass_count'], valueOf(run, ['passed', 'pass_count'], '—'));
+      const failed = valueOf(progress, ['failed', 'fail_count'], valueOf(run, ['failed', 'fail_count'], '—'));
+      const notChecked = valueOf(progress, ['not_checked', 'not_checked_count', 'unknown_count'], valueOf(run, ['not_checked', 'not_checked_count'], '—'));
+      const currentFactor = valueOf(progress, ['current_factor', 'current'], valueOf(run, ['current_factor', 'current'], '—'));
+      const latestError = valueOf(progress, ['latest_error', 'last_error', 'error'], valueOf(run, ['latest_error', 'last_error', 'error'], '—'));
+      document.getElementById('progress-text').textContent = `总任务数 ${total || '—'} · 已完成 ${done} · 通过 ${passed} · 失败 ${failed} · 未检查 ${notChecked} · 当前因子 ${currentFactor} · 最近错误 ${latestError}`;
+      const runId = valueOf(run, ['run_id', 'runId', 'id'], '—');
+      document.getElementById('run-summary').textContent = state.latestRun ? `批次 ${runId} · ${STATUS_LABELS[status] || status} · ${formatUtc(valueOf(run, ['started_at', 'created_at']))}` : '尚未加载运行状态';
+      const runText = status === 'RUNNING'
+        ? `偏差检查正在运行（批次 ${escapeHtml(String(runId))}），页面每 3 秒更新一次进度。`
+        : status === 'CANCELLED'
+          ? '偏差检查已终止，页面已恢复到终止前的因子结果。'
+          : '';
+      setBanner('run-banner', runText, Boolean(runText), status === 'CANCELLED' ? 'info' : 'warn');
+      const cancelButton = document.getElementById('btn-cancel-run');
+      cancelButton.disabled = state.canceling || (!state.running && status !== 'RUNNING');
+      cancelButton.textContent = state.canceling ? '正在终止…' : '终止检查';
+      // 批次报告下载：仅当存在已完成（非 RUNNING）且有任务的批次时启用，
+      // 否则禁用并提示；与“导出 CSV/JSON”（本地导出当前筛选行）相区分。
+      const reportReady = Boolean(state.latestRun) && status !== 'RUNNING' && total > 0;
+      [['btn-download-md', 'Markdown'], ['btn-download-csv', 'CSV']].forEach(([id, label]) => {
+        const button = document.getElementById(id);
+        button.disabled = !reportReady;
+        button.title = reportReady
+          ? `下载批次 ${runId} 的后端 ${label} 检查报告`
+          : '暂无已完成且有检查结果的批次，无法下载报告';
+      });
+    }
+
+    function renderFilters() {
+      document.getElementById('filter-factor').value = state.filters.factor;
+      ['library', 'category', 'status', 'bias', 'run', 'oos'].forEach(key => {
+        const id = key === 'bias' ? 'filter-bias' : key === 'run' ? 'filter-run' : `filter-${key}`;
+        document.getElementById(id).value = state.filters[key];
+      });
+      document.getElementById('filter-failed').checked = state.filters.failed;
+      document.getElementById('filter-not-checked').checked = state.filters.notChecked;
+    }
+    function renderAll() {
+      renderSummary();
+      renderFilterOptions();
+      renderFilters();
+      renderTable();
+      renderRunState();
+    }
+
+    function detailSection(title, content) { return `<section class="section"><h3>${escapeHtml(title)}</h3>${content}</section>`; }
+    function kv(items) {
+      // 仅放行内部生成且内容已转义的安全 HTML（statusBadge 徽章、copyControl
+      // 复制控件），其余含 < 的字符串一律转义，防止注入。
+      const isSafeHtml = (value) => typeof value === 'string'
+        && (value.startsWith('<span class="badge') || value.startsWith('<span class="copy-control"'));
+      // 对象/数组值序列化为 JSON，避免渲染成 [object Object]
+      const display = (v) => {
+        if (v == null || v === '') return '—';
+        if (typeof v === 'object') { try { return JSON.stringify(v); } catch { return String(v); } }
+        return String(v);
+      };
+      return `<div class="kv">${items.map(([key, value]) => `<div class="k">${escapeHtml(key)}</div><div class="v">${isSafeHtml(value) ? value : escapeHtml(display(value))}</div>`).join('')}</div>`;
+    }
+    function notAvailable(label = '该检查项暂无后端返回数据。') { return `<div class="empty"><strong>暂无数据</strong>${escapeHtml(label)}</div>`; }
+    function detailBlock(detail, aliases) {
+      let current = detail;
+      for (const key of aliases) if (current && current[key] !== undefined) { current = current[key]; break; }
+      return current && typeof current === 'object' ? current : {};
+    }
+    function renderLookahead(detail) {
+      const d = detailBlock(detail, ['lookahead', 'front_check', 'forward_check']);
+      const cutoffs = valueOf(d, ['cutoffs', 'truncations', 'checks'], []);
+      return detailSection('检查结论', kv([
+        ['检查状态', statusBadge(valueOf(d, ['status', 'result']), null, ovOf(state.selectedId, 'lookahead'))],
+        ['检查时间', formatUtc(valueOf(d, ['checked_at', 'checkedAt']))],
+        ['最大绝对差异', formatMetric(valueOf(d, ['max_abs_diff', 'maxAbsDiff']))],
+        ['浮点容差', formatMetric(valueOf(d, ['tolerance', 'atol']), 8)],
+        ['比较样本数', valueOf(d, ['compared_count', 'sample_count', 'n_compared'])],
+        ['失败原因', valueOf(d, ['failure_reason', 'reason', 'error'])],
+      ])) + '<div class="note">前视检查验证的是：截断未来数据后，历史因子值是否保持不变。</div>' + detailSection('截断点明细', Array.isArray(cutoffs) && cutoffs.length ? `<div class="table-wrap"><table class="detail-table"><thead><tr><th>截断时间</th><th>比较样本数</th><th>最大绝对差异</th><th>容差</th><th>结果</th></tr></thead><tbody>${cutoffs.map(c => `<tr><td class="mono">${escapeHtml(formatUtc(valueOf(c, ['cutoff', 'cutoff_at', 'timestamp'])))}</td><td>${escapeHtml(valueOf(c, ['compared_count', 'sample_count', 'n'], '—'))}</td><td class="mono">${escapeHtml(formatMetric(valueOf(c, ['max_abs_diff', 'maxAbsDiff'])))}</td><td class="mono">${escapeHtml(formatMetric(valueOf(c, ['tolerance', 'atol']), 8))}</td><td>${statusBadge(valueOf(c, ['status', 'result']))}</td></tr>`).join('')}</tbody></table></div>` : notAvailable('后端尚未返回截断点明细。'));
+    }
+    function renderFullSample(detail) {
+      const d = detailBlock(detail, ['full_sample', 'fullSample', 'leakage']);
+      return detailSection('全样本泄露检查', kv([
+        ['检查状态', statusBadge(valueOf(d, ['status', 'result']), null, ovOf(state.selectedId, 'full_sample'))],
+        ['全样本标准化', valueOf(d, ['uses_full_sample_standardization', 'full_sample_standardization']) === true ? '是' : valueOf(d, ['uses_full_sample_standardization', 'full_sample_standardization']) === false ? '否' : '—'],
+        ['未来填充', valueOf(d, ['uses_future_fill', 'future_fill']) === true ? '是' : valueOf(d, ['uses_future_fill', 'future_fill']) === false ? '否' : '—'],
+        ['未来字段', valueOf(d, ['uses_future_fields', 'future_fields']) === true ? '是' : valueOf(d, ['uses_future_fields', 'future_fields']) === false ? '否' : '—'],
+        ['历史值是否受影响', valueOf(d, ['historical_values_changed', 'history_changed']) === true ? '是' : valueOf(d, ['historical_values_changed', 'history_changed']) === false ? '否' : '—'],
+        ['检查说明', valueOf(d, ['description', 'explanation'])],
+      ])) + detailSection('证据文件', valueOf(d, ['evidence_path', 'evidence', 'report_path']) ? `<div class="evidence">${copyControl(valueOf(d, ['evidence_path', 'evidence', 'report_path']), '复制证据文件路径')}</div>` : notAvailable('后端尚未返回证据文件路径。'));
+    }
+    function renderMultipleTesting(detail) {
+      const d = detailBlock(detail, ['multiple_testing', 'multipleTesting', 'multiple_test']);
+      // 校正后显著性（significant_after_correction）是本检查的实质结论：
+      // 置顶到检查结论区，而不是埋在字段列表里。
+      const significant = valueOf(d, ['significant_after_correction', 'significant', 'fdr_significant']);
+      const conclusion = significant === null ? '' : significant
+        ? '<div class="note good">校正后显著（FDR）：是 —— significant_after_correction=true，校正后 p-value 不超过显著性阈值。</div>'
+        : '<div class="note">校正后显著（FDR）：否 —— significant_after_correction=false，此处的 PASS 仅表示 p-value 可计算，不代表显著。</div>';
+      return detailSection('多重检验结果', conclusion + kv([
+        ['检查状态', statusBadge(valueOf(d, ['status', 'result']), valueOf(d, ['note']), ovOf(state.selectedId, 'multiple_testing'))],
+        ['原始 p-value', formatMetric(valueOf(d, ['p_value', 'pValue']))],
+        ['校正后 p-value', formatMetric(valueOf(d, ['adjusted_p_value', 'p_value_adj', 'pValueAdjusted']))],
+        ['校正方法', valueOf(d, ['method', 'adjustment_method'])],
+        ['检验家族', valueOf(d, ['family', 'hypothesis_family'])],
+        ['家族内因子数量', valueOf(d, ['family_size', 'n_tests'])],
+        ['显著性阈值', valueOf(d, ['alpha', 'threshold'])],
+        ['探索性候选池', valueOf(d, ['exploratory', 'is_exploratory']) === true ? '是' : valueOf(d, ['exploratory', 'is_exploratory']) === false ? '否' : '—'],
+      ])) + '<div class="note">p-value 小于阈值本身不等于“没有偏差”；请同时查看校正方法和样本外结果。</div>';
+    }
+    function renderOverfit(detail) {
+      const d = detailBlock(detail, ['overfit', 'parameter_overfit', 'parameterOverfit']);
+      return detailSection('参数搜索记录', kv([
+        ['检查状态', statusBadge(valueOf(d, ['status', 'result']), null, ovOf(state.selectedId, 'overfit'))],
+        ['参数搜索空间', valueOf(d, ['search_space', 'parameter_space'])],
+        ['尝试参数组数', valueOf(d, ['tried_count', 'attempt_count', 'n_trials'])],
+        ['开发集最优参数', valueOf(d, ['best_dev_params', 'development_best_params'])],
+        ['验证集结果', valueOf(d, ['validation_result', 'validation_metrics'])],
+        ['参数是否已冻结', valueOf(d, ['frozen', 'parameters_frozen']) === true ? '是' : valueOf(d, ['frozen', 'parameters_frozen']) === false ? '否' : '—'],
+        ['样本外是否重新调参', valueOf(d, ['retuned_on_oos', 'oos_retuned']) === true ? '是' : valueOf(d, ['retuned_on_oos', 'oos_retuned']) === false ? '否' : '—'],
+      ]));
+    }
+    function renderCost(detail) {
+      const d = detailBlock(detail, ['cost', 'cost_assumption', 'costAssumption']);
+      const scenarios = valueOf(d, ['sensitivity', 'scenarios', 'cost_sensitivity'], []);
+      return detailSection('成本假设', kv([
+        ['检查状态', statusBadge(valueOf(d, ['status', 'result']), valueOf(d, ['note']), ovOf(state.selectedId, 'cost'))],
+        ['Maker 手续费', valueOf(d, ['fee_maker_bps', 'maker_fee_bps']) == null ? null : `${valueOf(d, ['fee_maker_bps', 'maker_fee_bps'])} bps`],
+        ['Taker 手续费', valueOf(d, ['fee_taker_bps', 'taker_fee_bps']) == null ? null : `${valueOf(d, ['fee_taker_bps', 'taker_fee_bps'])} bps`],
+        ['滑点', valueOf(d, ['slippage_bps', 'slippage']) == null ? null : `${valueOf(d, ['slippage_bps', 'slippage'])} bps`],
+        ['资金费率成本', valueOf(d, ['funding_cost', 'funding_cost_bps'])],
+        ['组合换手率', valueOf(d, ['portfolio_turnover', 'turnover'])],
+        ['毛收益', valueOf(d, ['gross_return', 'gross_return_pct'])],
+        ['扣成本后收益', valueOf(d, ['net_return', 'net_return_pct'])],
+      ])) + detailSection('成本敏感性', Array.isArray(scenarios) && scenarios.length ? `<div class="table-wrap"><table class="detail-table"><thead><tr><th>成本档位</th><th>毛收益</th><th>净收益</th><th>换手率</th><th>结果</th></tr></thead><tbody>${scenarios.map(c => `<tr><td class="mono">${escapeHtml(valueOf(c, ['cost_bps', 'bps'], '—'))} bps</td><td>${escapeHtml(formatMetric(valueOf(c, ['gross_return', 'gross_return_pct'])))}</td><td>${escapeHtml(formatMetric(valueOf(c, ['net_return', 'net_return_pct'])))}</td><td>${escapeHtml(formatMetric(valueOf(c, ['turnover', 'portfolio_turnover'])))}</td><td>${statusBadge(valueOf(c, ['status', 'result']))}</td></tr>`).join('')}</tbody></table></div>` : notAvailable('后端尚未返回成本敏感性结果。'));
+    }
+    function renderOos(detail) {
+      const d = detailBlock(detail, ['oos', 'out_of_sample', 'outOfSample', 'sample_out']);
+      const canRun = valueOf(d, ['can_run_once', 'canRunOnce', 'allow_run_once'], null) === true;
+      const oosButtonEnabled = canRun && !state.running && !state.oosRunSubmitted;
+      return `<div class="drawer-actions"><button class="btn-danger" id="btn-run-oos" ${oosButtonEnabled ? '' : 'disabled'}>运行锁定样本外（仅一次）</button></div><div class="note">样本外运行必须由后端强制执行“一次性”规则。前端不会把缺少结果的状态显示为通过。</div>` + detailSection('样本外状态', kv([
+        ['检查状态', statusBadge(valueOf(d, ['status', 'result']), valueOf(d, ['note']), ovOf(state.selectedId, 'out_of_sample'))],
+        ['开发集起止时间', formatRange(valueOf(d, ['development_window', 'dev_window']))],
+        ['锁定样本外起止时间', formatRange(valueOf(d, ['oos_window', 'out_of_sample_window']))],
+        ['样本外是否已锁定', valueOf(d, ['locked', 'is_locked']) === true ? '是' : valueOf(d, ['locked', 'is_locked']) === false ? '否' : '—'],
+        ['是否已经运行', valueOf(d, ['has_run', 'ran']) === true ? '是' : valueOf(d, ['has_run', 'ran']) === false ? '否' : '—'],
+        ['是否允许再次运行', canRun ? '是' : valueOf(d, ['can_run_once', 'canRunOnce', 'allow_run_once']) === false ? '否' : '—'],
+        ['样本外运行批次', copyControl(valueOf(d, ['run_id', 'runId', 'batch_id']), '复制样本外运行批次')],
+        ['数据哈希', valueOf(d, ['data_hash', 'data_sha256'])],
+        ['代码哈希', valueOf(d, ['code_hash', 'code_sha256'])],
+        ['配置哈希', valueOf(d, ['config_hash', 'config_sha256'])],
+        ['结果是否完整', valueOf(d, ['complete', 'result_complete']) === true ? '是' : valueOf(d, ['complete', 'result_complete']) === false ? '否' : '—'],
+      ]));
+    }
+
+    function metricCard(label, value, digits = 4) {
+      const num = typeof value === 'number' && Number.isFinite(value) ? value : null;
+      const cls = num === null ? '' : num > 0 ? 'pos' : num < 0 ? 'neg' : '';
+      return `<div class="card"><div class="label">${escapeHtml(label)}</div><div class="value ${cls}">${num === null ? '—' : num.toFixed(digits)}</div></div>`;
+    }
+    function decayBar(value, maxAbs) {
+      const num = typeof value === 'number' && Number.isFinite(value) ? value : null;
+      if (num === null || !maxAbs) return '<span class="muted">—</span>';
+      const width = Math.max(2, Math.round(Math.abs(num) / maxAbs * 100));
+      return `<div class="decay-bar" title="${escapeHtml(String(num))}"><div class="decay-fill ${num >= 0 ? 'pos' : 'neg'}" style="width:${width}%"></div></div>`;
+    }
+    function renderMetrics() {
+      if (state.metricsLoading) return '<div class="empty"><strong>正在计算评估指标…</strong>首次计算需要数秒（真实重算因子值），命中缓存后毫秒级返回。</div>';
+      if (state.metricsError) return `<div class="empty"><strong>评估指标加载失败</strong>${escapeHtml(state.metricsError)}</div>`;
+      const m = state.metrics;
+      if (!m) return notAvailable('尚未加载评估指标；切换到该 tab 后自动计算。');
+      const warnings = Array.isArray(m.warnings) ? m.warnings : [];
+      const warningBlock = warnings.length
+        ? `<ul class="warn-list">${warnings.map(w => `<li>${escapeHtml(w)}</li>`).join('')}</ul>`
+        : '';
+      const exportBar = '<div class="drawer-actions"><button id="btn-refresh-metrics" title="强制重算：跳过缓存，按同一缓存键口径重算并覆盖落库">↻ 重算</button><button id="btn-export-metrics">导出指标 CSV</button></div>';
+      const overview = detailSection('计算口径', kv([
+        ['状态', m.status === 'OK' ? 'OK' : m.status === 'PARTIAL' ? 'PARTIAL（部分标的失败）' : valueOf(m, ['status'], '—')],
+        ['数据粒度', { '1d': '日频', '1m': '分钟频', '1d_snapshot': '日频快照（降级）' }[m.frequency] || valueOf(m, ['frequency'], '—')],
+        ['评估窗口（UTC）', formatRange(m.window)],
+        ['有效样本数', m.sample_count],
+        ['计算耗时', m.elapsed_ms == null ? null : `${m.elapsed_ms} ms${m.cache_hit ? '（缓存命中）' : ''}`],
+        ['失败原因', valueOf(m, ['failure_reason'])],
+      ]));
+      if (m.status === 'BLOCKED' || m.status === 'ERROR') {
+        return exportBar + overview + notAvailable(valueOf(m, ['failure_reason'], '样本不足或计算失败，后端未返回指标数值。')) + warningBlock;
+      }
+      const decay = Array.isArray(m.ic_decay) ? m.ic_decay : [];
+      const maxAbsDecay = Math.max(0, ...decay.map(d => Math.abs(typeof d.rank_ic === 'number' ? d.rank_ic : 0)));
+      const quantile = m.quantile_test || {};
+      const buckets = Array.isArray(quantile.buckets) ? quantile.buckets : [];
+      const maxAbsBucket = Math.max(0, ...buckets.map(b => Math.abs(typeof b.mean_return === 'number' ? b.mean_return : 0)));
+      const rolling = m.rolling || {};
+      const symbols = Array.isArray(m.symbols) ? m.symbols : [];
+      return exportBar
+        + overview
+        + `<div class="metric-cards">${metricCard('IC（主 horizon）', m.ic)}${metricCard('RankIC（主 horizon）', m.rank_ic)}${metricCard('ICIR（滚动 RankIC 均值/标准差）', m.icir)}${metricCard('换手率（1-排名自相关）', m.turnover)}</div>`
+        + detailSection('IC 衰减（多 horizon RankIC/IC）', decay.length ? `<div class="table-wrap"><table class="detail-table"><thead><tr><th>horizon（bar）</th><th>RankIC</th><th>IC</th><th>样本数</th><th>衰减</th></tr></thead><tbody>${decay.map(d => `<tr><td class="mono">${escapeHtml(d.horizon)}</td><td class="mono">${escapeHtml(formatMetric(d.rank_ic))}</td><td class="mono">${escapeHtml(formatMetric(d.ic))}</td><td>${escapeHtml(d.sample_count ?? '—')}</td><td>${decayBar(d.rank_ic, maxAbsDecay)}</td></tr>`).join('')}</tbody></table></div>` : notAvailable('后端未返回 IC 衰减明细。'))
+        + detailSection('分层测试（按因子值分组）', (buckets.length ? `<div class="table-wrap"><table class="detail-table"><thead><tr><th>分组</th><th>平均未来收益</th><th>样本数</th><th>强度</th></tr></thead><tbody>${buckets.map(b => `<tr><td class="mono">Q${escapeHtml(b.bucket)}</td><td class="mono">${escapeHtml(formatMetric(b.mean_return, 6))}</td><td>${escapeHtml(b.sample_count ?? '—')}</td><td>${decayBar(b.mean_return, maxAbsBucket)}</td></tr>`).join('')}</tbody></table></div>` : notAvailable('样本不足，未返回分层结果。')) + kv([
+          ['单调性（组序与组均收益 Spearman）', formatMetric(quantile.monotonicity)],
+          ['多空收益（顶组-底组）', formatMetric(quantile.long_short, 6)],
+          ['分层 horizon（bar）', quantile.horizon],
+        ]))
+        + detailSection('滚动稳定性（滚动窗口 RankIC）', kv([
+          ['窗口均值', formatMetric(rolling.mean)],
+          ['窗口标准差', formatMetric(rolling.std)],
+          ['正值占比', rolling.positive_ratio == null ? null : `${(rolling.positive_ratio * 100).toFixed(1)}%`],
+          ['窗口数量', rolling.count],
+          ['窗口/步长（bar）', rolling.window_bars == null ? null : `${rolling.window_bars} / ${rolling.step_bars}`],
+        ]))
+        + detailSection('逐 symbol 明细', symbols.length ? `<div class="table-wrap"><table class="detail-table"><thead><tr><th>symbol</th><th>样本数</th><th>数据来源</th><th>IC</th><th>RankIC</th><th>ICIR</th><th>换手率</th></tr></thead><tbody>${symbols.map(s => `<tr><td class="mono">${escapeHtml(s.symbol)}</td><td>${escapeHtml(s.sample_count ?? '—')}</td><td>${escapeHtml(s.source === 'recomputed' ? 'K线重算' : '落库值')}</td><td class="mono">${escapeHtml(formatMetric(s.ic))}</td><td class="mono">${escapeHtml(formatMetric(s.rank_ic))}</td><td class="mono">${escapeHtml(formatMetric(s.icir))}</td><td class="mono">${escapeHtml(formatMetric(s.turnover))}</td></tr>`).join('')}</tbody></table></div>` : notAvailable('后端未返回逐 symbol 明细。'))
+        + `<div class="note">口径：逐 symbol 时间序列计算，跨 symbol 取均值；${escapeHtml(valueOf(m, ['method'], ''))}</div>`
+        + warningBlock;
+    }
+    async function ensureMetrics() {
+      const id = state.selectedId;
+      if (!id || state.metricsLoading) return;
+      if (state.metricsFor === id && (state.metrics || state.metricsError)) return;
+      state.metricsLoading = true;
+      state.metricsError = '';
+      state.metrics = null;
+      state.metricsFor = id;
+      renderDrawer();
+      try {
+        state.metrics = unwrap(await biasControlApi.metrics(id));
+      } catch (error) {
+        state.metricsError = String(error.message || error);
+      } finally {
+        state.metricsLoading = false;
+        if (state.detailTab === 'metrics' && state.metricsFor === id) renderDrawer();
+      }
+    }
+    async function refreshMetrics() {
+      // ↻ 重算：?refresh=1 跳过缓存强制重算并覆盖落库（缓存键口径不变）
+      const id = state.selectedId;
+      if (!id || state.metricsLoading) return;
+      state.metricsLoading = true;
+      state.metricsError = '';
+      renderDrawer();
+      try {
+        state.metrics = unwrap(await biasControlApi.metrics(id, null, true));
+        state.metricsFor = id;
+        showToast('评估指标已强制重算。');
+      } catch (error) {
+        state.metricsError = String(error.message || error);
+      } finally {
+        state.metricsLoading = false;
+        if (state.detailTab === 'metrics') renderDrawer();
+      }
+    }
+    async function deleteFactorById(factorId) {
+      if (!factorId) return;
+      if (!window.confirm(`确认下架因子 ${factorId}？\n\nMD 与实现文件将移入 factor_trash/（可恢复），注册表即时离册，该因子的评估指标/检查状态/偏差结果缓存一并清理（历史批次保留）。`)) return;
+      try {
+        await biasControlApi.deleteFactor(factorId);
+        showToast(`因子 ${factorId} 已下架，文件移入 factor_trash/。`);
+        if (state.selectedId === factorId) closeDrawer();
+        loadFeatures();
+      } catch (error) {
+        showToast(`删除失败：${error.message}`, 'error');
+      }
+    }
+    async function exportMetricsCsv() {
+      const id = state.selectedId;
+      if (!id) return;
+      try {
+        const text = await biasControlApi.metrics(id, 'csv');
+        downloadFile(`factor_metrics_${id}.csv`, typeof text === 'string' ? text : String(text), 'text/csv;charset=utf-8');
+        showToast('评估指标 CSV 已导出。');
+      } catch (error) {
+        showToast(`指标 CSV 导出失败：${error.message}`, 'error');
+      }
+    }
+
+    function corrCellStyle(value) {
+      if (typeof value !== 'number' || !Number.isFinite(value)) return '';
+      const alpha = Math.min(0.85, Math.abs(value));
+      return value >= 0 ? `background:rgba(14,203,129,${alpha.toFixed(2)})` : `background:rgba(246,70,93,${alpha.toFixed(2)})`;
+    }
+    function renderCorrMatrix() {
+      const body = document.getElementById('corr-body');
+      const title = document.getElementById('corr-title');
+      if (state.corrLoading) {
+        body.innerHTML = '<div class="empty"><strong>正在计算相关性矩阵…</strong>首次计算需重算稀疏因子，可能耗时数十秒；命中缓存后毫秒级返回。</div>';
+        return;
+      }
+      if (state.corrError) {
+        body.innerHTML = `<div class="empty"><strong>相关性矩阵加载失败</strong>${escapeHtml(state.corrError)}</div>`;
+        return;
+      }
+      const data = state.corr;
+      if (!data) {
+        body.innerHTML = '<div class="empty"><strong>暂无数据</strong>尚未加载相关性矩阵。</div>';
+        return;
+      }
+      const factorIds = Array.isArray(data.factor_ids) ? data.factor_ids : [];
+      const matrix = Array.isArray(data.matrix) ? data.matrix : [];
+      const counts = Array.isArray(data.sample_counts) ? data.sample_counts : [];
+      const excluded = Array.isArray(data.excluded) ? data.excluded : [];
+      title.innerHTML = `因子相关性矩阵<small>日频 Spearman · ${factorIds.length} 个因子 · ${escapeHtml(formatUtc(valueOf(data, ['computed_at'])))}</small>`;
+      if (!factorIds.length) {
+        body.innerHTML = '<div class="empty"><strong>暂无数据</strong>后端未返回可用的因子相关性矩阵。</div>';
+        return;
+      }
+      const excludedNote = excluded.length
+        ? `<div class="note">以下 ${excluded.length} 个因子未进入矩阵：${excluded.map(e => `${escapeHtml(e.factor_id)}（${escapeHtml(e.reason || '样本不足')}）`).join('、')}</div>`
+        : '';
+      const head = `<thead><tr><th class="corner" title="行因子 ↓ / 列因子 →"></th>${factorIds.map(id => `<th class="fid" title="${escapeHtml(id)}">${escapeHtml(id)}</th>`).join('')}</tr></thead>`;
+      const rows = factorIds.map((rowId, i) => {
+        const cells = factorIds.map((colId, j) => {
+          const value = matrix[i] ? matrix[i][j] : null;
+          const n = counts[i] ? counts[i][j] : null;
+          const valid = typeof value === 'number' && Number.isFinite(value);
+          const label = valid ? value.toFixed(2) : '·';
+          const tip = `${rowId} × ${colId}: ${valid ? value : '样本不足'}${n != null ? `（n=${n}）` : ''}`;
+          return `<td class="${i === j ? 'corr-diag' : ''}" style="${corrCellStyle(value)}" title="${escapeHtml(tip)}">${i === j ? '1' : label}</td>`;
+        }).join('');
+        return `<tr><th title="${escapeHtml(rowId)}">${escapeHtml(rowId)}</th>${cells}</tr>`;
+      }).join('');
+      body.innerHTML = `<div class="corr-meta">
+        <button id="btn-export-corr">导出矩阵 CSV</button>
+        <button id="btn-export-corr-png" title="用 canvas 手绘颜色格导出 PNG（不依赖第三方库）">导出 PNG</button>
+        <span>样本数 ${escapeHtml(data.sample_count ?? '—')}</span>
+        <span>耗时 ${escapeHtml(data.elapsed_ms ?? '—')} ms${data.cache_hit ? '（缓存命中）' : ''}</span>
+        <span>窗口 ${escapeHtml(formatRange(data.window))}</span>
+        <span class="corr-legend"><i style="background:rgba(14,203,129,.7)"></i>正相关 <i style="background:rgba(246,70,93,.7)"></i>负相关 <i style="background:var(--panel-2)"></i>样本不足</span>
+      </div>${excludedNote}<div class="table-wrap"><table class="corr-table">${head}<tbody>${rows}</tbody></table></div>`;
+      const exportButton = document.getElementById('btn-export-corr');
+      if (exportButton) exportButton.addEventListener('click', exportCorrCsv);
+      const exportPngButton = document.getElementById('btn-export-corr-png');
+      if (exportPngButton) exportPngButton.addEventListener('click', exportCorrPng);
+    }
+    async function exportCorrCsv() {
+      try {
+        const text = await biasControlApi.correlationMatrix('csv');
+        downloadFile('factor_correlation_matrix.csv', typeof text === 'string' ? text : String(text), 'text/csv;charset=utf-8');
+        showToast('相关性矩阵 CSV 已导出。');
+      } catch (error) {
+        showToast(`矩阵 CSV 导出失败：${error.message}`, 'error');
+      }
+    }
+    function exportCorrPng() {
+      // canvas 手绘热力图导出 PNG（平台侧不引 matplotlib）：颜色与页面表格一致，
+      // 正绿负红、alpha=min(0.85,|v|)、样本不足=panel-2；小矩阵清晰标注数值，
+      // 大矩阵允许字小（cell<14px 时不写数值只留色块）。
+      const data = state.corr;
+      const factorIds = data && Array.isArray(data.factor_ids) ? data.factor_ids : [];
+      const matrix = data && Array.isArray(data.matrix) ? data.matrix : [];
+      if (!factorIds.length) {
+        showToast('暂无矩阵数据，无法导出 PNG。', 'error');
+        return;
+      }
+      const n = factorIds.length;
+      const cell = n <= 20 ? 28 : n <= 40 ? 20 : n <= 80 ? 12 : 8;
+      const labelW = 110;
+      const labelH = 110;
+      const titleH = 30;
+      const width = labelW + n * cell + 8;
+      const height = titleH + labelH + n * cell + 8;
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#0b0e11';
+      ctx.fillRect(0, 0, width, height);
+      ctx.fillStyle = '#eaecef';
+      ctx.font = '13px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`因子相关性矩阵（日频 Spearman · ${n} 个因子 · ${formatUtc(valueOf(data, ['computed_at']))}）`, 8, titleH / 2 + 2);
+      const colorOf = (value) => {
+        if (typeof value !== 'number' || !Number.isFinite(value)) return '#1e2329';
+        const alpha = Math.min(0.85, Math.abs(value));
+        return value >= 0 ? `rgba(14,203,129,${alpha.toFixed(2)})` : `rgba(246,70,93,${alpha.toFixed(2)})`;
+      };
+      const showText = cell >= 14;
+      const fontSize = Math.max(7, Math.floor(cell * 0.45));
+      for (let i = 0; i < n; i++) {
+        ctx.fillStyle = '#848e9c';
+        ctx.font = '10px monospace';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(factorIds[i], labelW - 4, titleH + labelH + i * cell + cell / 2);
+        ctx.save();
+        ctx.translate(labelW + i * cell + cell / 2, titleH + labelH - 4);
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillStyle = '#848e9c';
+        ctx.font = '10px monospace';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillText(factorIds[i], 0, 0);
+        ctx.restore();
+        for (let j = 0; j < n; j++) {
+          const value = matrix[i] ? matrix[i][j] : null;
+          const valid = typeof value === 'number' && Number.isFinite(value);
+          const x = labelW + j * cell;
+          const y = titleH + labelH + i * cell;
+          ctx.fillStyle = colorOf(value);
+          ctx.fillRect(x, y, cell - 1, cell - 1);
+          if (showText) {
+            ctx.fillStyle = i === j ? '#5e6773' : '#eaecef';
+            ctx.font = `${fontSize}px monospace`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(i === j ? '1' : (valid ? value.toFixed(2) : '·'), x + cell / 2, y + cell / 2);
+          }
+        }
+      }
+      const link = document.createElement('a');
+      link.href = canvas.toDataURL('image/png');
+      link.download = 'factor_correlation_matrix.png';
+      document.body.appendChild(link);
+      link.click();
+      setTimeout(() => link.remove(), 0);
+      showToast('相关性矩阵 PNG 已导出。');
+    }
+    async function openCorrMatrix() {
+      document.getElementById('corr-modal').classList.add('open');
+      document.getElementById('corr-modal').setAttribute('aria-hidden', 'false');
+      document.getElementById('corr-mask').classList.add('show');
+      if (state.corr || state.corrLoading) { renderCorrMatrix(); return; }
+      state.corrLoading = true;
+      state.corrError = '';
+      renderCorrMatrix();
+      try {
+        state.corr = unwrap(await biasControlApi.correlationMatrix());
+      } catch (error) {
+        state.corrError = String(error.message || error);
+      } finally {
+        state.corrLoading = false;
+        renderCorrMatrix();
+      }
+    }
+    function closeCorrModal() {
+      document.getElementById('corr-modal').classList.remove('open');
+      document.getElementById('corr-modal').setAttribute('aria-hidden', 'true');
+      document.getElementById('corr-mask').classList.remove('show');
+    }
+
+    function renderDrawer() {
+      const body = document.getElementById('drawer-body');
+      const detail = state.detail || {};
+      const content = {
+        lookahead: renderLookahead,
+        full_sample: renderFullSample,
+        multiple_testing: renderMultipleTesting,
+        overfit: renderOverfit,
+        cost: renderCost,
+        metrics: renderMetrics,
+        oos: renderOos,
+      }[state.detailTab];
+      body.innerHTML = state.detailLoading ? '<div class="empty"><strong>加载详情中…</strong>正在请求后端检查证据。</div>' : content(detail);
+      document.querySelectorAll('.drawer-tab').forEach(tab => tab.classList.toggle('active', tab.dataset.detailTab === state.detailTab));
+      const oosButton = document.getElementById('btn-run-oos');
+      if (oosButton) oosButton.addEventListener('click', startOosRun);
+      const metricsButton = document.getElementById('btn-export-metrics');
+      if (metricsButton) metricsButton.addEventListener('click', exportMetricsCsv);
+      const refreshButton = document.getElementById('btn-refresh-metrics');
+      if (refreshButton) refreshButton.addEventListener('click', refreshMetrics);
+      document.querySelectorAll('.copy-btn').forEach(button => button.addEventListener('click', event => {
+        event.stopPropagation();
+        copyValue(button.dataset.copyValue || '');
+      }));
+    }
+    async function openDetail(id, tab) {
+      state.selectedId = id;
+      state.detailTab = tab || 'lookahead';
+      state.oosRunSubmitted = false;
+      state.metrics = null;
+      state.metricsError = '';
+      state.metricsFor = null;
+      state.metricsLoading = false;
+      state.detail = state.rows.find(row => String(rowId(row)) === String(id)) || {};
+      state.detailLoading = true;
+      document.getElementById('drawer-title').innerHTML = `偏差控制详情<small>${copyControl(id, '复制因子 ID')}</small>`;
+      document.getElementById('detail-drawer').classList.add('open');
+      document.getElementById('detail-drawer').setAttribute('aria-hidden', 'false');
+      document.getElementById('drawer-mask').classList.add('show');
+      renderDrawer();
+      // 行内「计算指标」入口：直接落在评估指标 tab 并立即触发按需计算
+      if (state.detailTab === 'metrics') ensureMetrics();
+      try {
+        const payload = await biasControlApi.detail(id);
+        state.detail = unwrap(payload);
+      } catch (error) {
+        if (error.status === 404 || error.status === 405) showToast('详情接口未接入，当前仅展示列表已返回字段。', 'warn');
+        else showToast(`详情加载失败：${error.message}`, 'error');
+      } finally {
+        state.detailLoading = false;
+        renderDrawer();
+      }
+    }
+    function closeDrawer() {
+      document.getElementById('detail-drawer').classList.remove('open');
+      document.getElementById('detail-drawer').setAttribute('aria-hidden', 'true');
+      document.getElementById('drawer-mask').classList.remove('show');
+    }
+
+    async function startFactorCheck(factorId) {
+      // 单因子自动五查：复用通用批次进度条与轮询（run-check 返回的就是偏差批次 run）
+      if (state.running) { showToast('已有偏差检查批次在运行，完成后才能发起下一个。', 'warn'); return; }
+      try {
+        const payload = unwrap(await biasControlApi.runFactorCheck(factorId));
+        const run = valueOf(payload, ['run'], payload) || {};
+        const runId = valueOf(run, ['run_id', 'runId', 'id']);
+        if (!runId) {
+          showToast(`${factorId} 自动五查已启动，但后端未返回 run_id，请稍后手动刷新。`, 'warn');
+          await loadOverview();
+          return;
+        }
+        state.latestRun = run;
+        const runToken = ++state.runToken;
+        state.running = true;
+        renderRunState();
+        renderTable();
+        showToast(`已启动 ${factorId} 自动五查（批次 ${runId}）：单因子可能耗时数分钟，进度见上方进度条，完成后表格自动刷新。`);
+        pollRun(runId, runToken);
+      } catch (error) {
+        if (error.status === 409) showToast(`启动冲突：${error.message}`, 'warn');
+        else showToast(`启动自动五查失败：${error.message}`, 'error');
+      }
+    }
+    async function startRun(scope, ids) {
+      if (!state.available || state.running) return;
+      const runToken = ++state.runToken;
+      state.running = true;
+      renderRunState();
+      try {
+        const payload = unwrap(await biasControlApi.startCheck(scope, ids));
+        state.latestRun = valueOf(payload, ['run', 'latest_run'], payload);
+        const runId = valueOf(state.latestRun, ['run_id', 'runId', 'id']);
+        if (!runId) throw new Error('后端未返回 run_id，无法追踪检查进度');
+        showToast(`已提交偏差检查任务：${runId}`);
+        pollRun(runId, runToken);
+      } catch (error) {
+        state.running = false;
+        if (error.status === 404 || error.status === 405) setBanner('api-banner', '<strong>后端接口未接入。</strong>当前页面不会使用假数据推断 PASS。', true, 'info');
+        else showToast(`启动检查失败：${error.message}`, 'error');
+        renderRunState();
+      }
+    }
+    async function pollRun(runId, runToken = state.runToken) {
+      if (runToken !== state.runToken) return;
+      clearTimeout(state.runTimer);
+      if (document.hidden) {
+        // 页面隐藏时跳过本次请求，保持 3 秒轮询节拍
+        state.runTimer = setTimeout(() => pollRun(runId, runToken), 3000);
+        return;
+      }
+      try {
+        const payload = unwrap(await biasControlApi.run(runId));
+        if (runToken !== state.runToken) return;
+        state.latestRun = payload;
+        renderRunState();
+        const status = rawStatus(valueOf(payload, ['status', 'state']));
+        if (status === 'RUNNING') {
+          state.runTimer = setTimeout(() => pollRun(runId, runToken), 3000);
+        } else {
+          state.running = false;
+          await loadOverview();
+          showToast(`偏差检查完成：${STATUS_LABELS[status] || status}`, status === 'FAIL' ? 'error' : '');
+        }
+      } catch (error) {
+        state.running = false;
+        showToast(`运行状态获取失败：${error.message}`, 'error');
+        renderRunState();
+      }
+    }
+    async function cancelRun() {
+      const runId = valueOf(state.latestRun, ['run_id', 'runId', 'id']);
+      const status = rawStatus(valueOf(state.latestRun, ['status', 'state']));
+      if (!runId || (!state.running && status !== 'RUNNING') || state.canceling) return;
+      if (!window.confirm('终止本次偏差检查后，将恢复终止前的最新因子结果。确定继续吗？')) return;
+
+      clearTimeout(state.runTimer);
+      ++state.runToken;
+      state.canceling = true;
+      renderRunState();
+      try {
+        const payload = unwrap(await biasControlApi.cancelRun(runId));
+        state.latestRun = valueOf(payload, ['run', 'latest_run'], payload);
+        state.running = false;
+        let refreshed = true;
+        try {
+          await loadOverview();
+        } catch (refreshError) {
+          // The cancel response already restored the backend cache. Keep the
+          // last valid table visible if the follow-up refresh is unavailable.
+          refreshed = false;
+          showToast(`检查已终止，但页面刷新失败：${refreshError.message}`, 'warn');
+        }
+        if (refreshed) showToast('偏差检查已终止，页面已恢复原状。', 'warn');
+      } catch (error) {
+        showToast(`终止检查失败：${error.message}`, 'error');
+        state.running = true;
+        const retryToken = ++state.runToken;
+        pollRun(runId, retryToken);
+      } finally {
+        state.canceling = false;
+        renderRunState();
+      }
+    }
+    async function startOosRun() {
+      if (!state.detail) return;
+      const oos = oosValue(state.detail);
+      if (valueOf(oos, ['can_run_once', 'canRunOnce', 'allow_run_once'], null) !== true) {
+        showToast('后端未确认样本外运行权限，已阻止操作。', 'warn');
+        return;
+      }
+      if (!window.confirm('锁定样本外只能运行一次。确认现在提交最终样本外检查吗？')) return;
+      state.oosRunSubmitted = true;
+      renderDrawer();
+      await startRun('locked_oos', [state.selectedId]);
+    }
+    function downloadFile(name, content, type) {
+      const blob = new Blob([content], { type });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = name;
+      document.body.appendChild(link);
+      link.click();
+      setTimeout(() => { URL.revokeObjectURL(link.href); link.remove(); }, 0);
+    }
+    function exportRows(format) {
+      const rows = getFilteredRows();
+      if (!rows.length || !state.available) return;
+      const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      if (format === 'json') downloadFile(`bias_control_${stamp}.json`, JSON.stringify(rows, null, 2), 'application/json;charset=utf-8');
+      else {
+        const header = ['factor_id', 'library', 'category', 'overall_status', ...CHECKS.map(([, label]) => label), 'oos_status', 'checked_at', 'failure_reason'];
+        const lines = rows.map(row => [rowId(row), valueOf(row, ['library', 'source', 'lib']), valueOf(row, ['category', 'factor_category']), dispOverall(row), ...CHECKS.map(([key]) => dispCheck(row, key)), dispOos(row), valueOf(row, ['checked_at', 'last_checked_at', 'updated_at']), valueOf(row, ['failure_reason', 'failureReason', 'reason', 'error_message'])]);
+        downloadFile(`bias_control_${stamp}.csv`, '\ufeff' + [header, ...lines].map(line => line.map(csvCell).join(',')).join('\r\n'), 'text/csv;charset=utf-8');
+      }
+    }
+    async function downloadReport(format) {
+      const run = state.latestRun || {};
+      const runId = valueOf(run, ['run_id', 'runId', 'id']);
+      const status = rawStatus(valueOf(run, ['status', 'state']));
+      const total = Number(valueOf(run, ['total_tasks', 'total'], 0)) || 0;
+      if (!runId || status === 'RUNNING' || !total) { showToast('当前没有可下载的检查批次。', 'warn'); return; }
+      try {
+        const report = await biasControlApi.report(runId, format);
+        const mime = format === 'csv' ? 'text/csv;charset=utf-8' : 'text/markdown;charset=utf-8';
+        downloadFile(`bias_control_${runId}.${format}`, typeof report === 'string' ? report : JSON.stringify(report, null, 2), mime);
+      } catch (error) { showToast(`报告下载失败：${error.message}`, 'error'); }
+    }
+
+    document.getElementById('btn-refresh').addEventListener('click', loadOverview);
+    document.getElementById('view-tab-features').addEventListener('click', () => switchView('features'));
+    document.getElementById('view-tab-bias').addEventListener('click', () => switchView('bias'));
+    document.getElementById('btn-corr-matrix').addEventListener('click', openCorrMatrix);
+    document.getElementById('corr-close').addEventListener('click', closeCorrModal);
+    document.getElementById('corr-mask').addEventListener('click', closeCorrModal);
+    document.getElementById('btn-download-md').addEventListener('click', () => downloadReport('md'));
+    document.getElementById('btn-download-csv').addEventListener('click', () => downloadReport('csv'));
+    document.getElementById('btn-export-json').addEventListener('click', () => exportRows('json'));
+    document.getElementById('btn-export-csv').addEventListener('click', () => exportRows('csv'));
+
+    // 人工解封 / 撤销解封（事件委托到列表 tbody）
+    document.getElementById('factor-tbody').addEventListener('click', async (event) => {
+      const link = event.target.closest('.ov-act');
+      if (!link) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const fid = link.dataset.f;
+      const key = link.dataset.k;
+      try {
+        if (link.dataset.act === 'override') {
+          const operator = window.prompt(`人工解封 ${fid} / ${key}\n请输入操作人姓名：`);
+          if (!operator || !operator.trim()) return;
+          const reason = window.prompt('解封理由（可选）：') || '';
+          await biasControlApi.setOverride(fid, key, operator.trim(), reason.trim() || null);
+          showToast(`已人工解封：${fid} / ${key}`);
+        } else {
+          if (!window.confirm(`撤销 ${fid} / ${key} 的人工解封，恢复原状态？`)) return;
+          await biasControlApi.revokeOverride(fid, key);
+          showToast(`已撤销解封：${fid} / ${key}`);
+        }
+        await loadOverrides();
+        renderAll();
+      } catch (error) {
+        showToast(`解封操作失败：${error.message}`, 'error');
+      }
+    });
+    // ---------- 导入因子（单个 / 批量）：MD 与实现 .py 成对上传 ----------
+    // 每批上限：每个因子导入成功即后台预计算指标，一批太多会并发抢占数据库（实测 >10 易卡）
+    const IMPORT_BATCH_LIMIT = 10;
+    function importBasename(name) { return String(name || '').split(/[\\/]/).pop(); }
+    function importStem(name) {
+      return importBasename(name).replace(/\.(md|py)$/i, '').toLowerCase().replace(/-/g, '_');
+    }
+
+    // 配对：优先 MD frontmatter 的 implementation 声明文件名，兜底同名主干（-/_ 归一）
+    async function pairFactorFiles(mdFiles, pyFiles) {
+      const pys = Array.from(pyFiles || []);
+      const pyByName = new Map(pys.map(f => [f.name.toLowerCase(), f]));
+      const used = new Set();
+      const pairs = [];
+      for (const md of Array.from(mdFiles || [])) {
+        let impl = null;
+        try {
+          const text = await md.text();
+          const m = text.match(/^implementation:\s*["']?([^\s"']+)/m);
+          if (m) {
+            const declared = importBasename(m[1]).toLowerCase();
+            if (pyByName.has(declared) && !used.has(declared)) { impl = pyByName.get(declared); used.add(declared); }
+          }
+        } catch (e) { /* 读不出文本就退回主干名配对 */ }
+        if (!impl) {
+          const stem = importStem(md.name);
+          const candidate = pys.find(f => !used.has(f.name.toLowerCase()) && importStem(f.name) === stem);
+          if (candidate) { impl = candidate; used.add(candidate.name.toLowerCase()); }
+        }
+        pairs.push({ md, impl });
+      }
+      return pairs;
+    }
+
+    async function runFactorImport() {
+      const mdInput = document.getElementById('import-mds');
+      const pyInput = document.getElementById('import-pys');
+      const results = document.getElementById('import-results');
+      const btn = document.getElementById('btn-import-run');
+      const pairs = await pairFactorFiles(mdInput.files, pyInput.files);
+      if (!pairs.length) { results.innerHTML = '<span class="muted">未选择 .md 因子文档。</span>'; return; }
+      if (pairs.length > IMPORT_BATCH_LIMIT) {
+        results.innerHTML = `<span class="qual-no">✗ 每批最多 ${IMPORT_BATCH_LIMIT} 个因子，本次选了 ${pairs.length} 个。</span>`
+          + `<span class="muted">请分批导入（一批太多会并发预计算指标、抢占数据库导致页面变卡）。</span>`;
+        return;
+      }
+      btn.disabled = true;
+      const lines = [];
+      const render = () => { results.innerHTML = lines.join('\n'); };
+      let okCount = 0;
+      for (const pair of pairs) {
+        lines.push(`<span class="muted">上传中… ${escapeHtml(pair.md.name)}${pair.impl ? ' + ' + escapeHtml(pair.impl.name) : '（未配对实现 .py）'}</span>`);
+        render();
+        const fd = new FormData();
+        fd.append('file', pair.md);
+        if (pair.impl) fd.append('impl', pair.impl);
+        try {
+          const r = await fetch('/api/upload/factor', { method: 'POST', body: fd });
+          const data = await r.json();
+          if (r.ok && data.ok) {
+            okCount += 1;
+            const vid = (data.validation || {}).factor_id || '';
+            lines[lines.length - 1] = `<span class="qual-yes">✓</span> ${escapeHtml(pair.md.name)} → 已导入${vid ? '（' + escapeHtml(vid) + '）' : ''}，指标后台预计算中`;
+          } else {
+            lines[lines.length - 1] = `<span class="qual-no">✗</span> ${escapeHtml(pair.md.name)} → ${escapeHtml(String(data.detail || data.message || '上传失败'))}`;
+          }
+        } catch (e) {
+          lines[lines.length - 1] = `<span class="qual-no">✗</span> ${escapeHtml(pair.md.name)} → ${escapeHtml(String(e.message || e))}`;
+        }
+        render();
+      }
+      lines.push(`<span class="muted">完成：${okCount}/${pairs.length} 导入成功。</span>`);
+      render();
+      btn.disabled = true;
+      mdInput.value = '';
+      pyInput.value = '';
+      loadFeatures();
+      loadOverview();
+    }
+
+    document.getElementById('btn-import').addEventListener('click', () => {
+      const panel = document.getElementById('import-panel');
+      panel.style.display = panel.style.display === 'none' ? '' : 'none';
+    });
+    document.getElementById('import-mds').addEventListener('change', (event) => {
+      document.getElementById('btn-import-run').disabled = !(event.target.files && event.target.files.length);
+    });
+    document.getElementById('btn-import-run').addEventListener('click', () => {
+      runFactorImport().catch(e => showToast(`导入异常：${e.message}`, 'error'));
+    });
+
+    document.getElementById('btn-cancel-run').addEventListener('click', cancelRun);
+    document.getElementById('btn-latest-run').addEventListener('click', () => {
+      const runId = valueOf(state.latestRun, ['run_id', 'runId', 'id']);
+      if (runId) showToast(`当前最近运行批次：${runId}`); else showToast('暂无最近运行批次。', 'warn');
+    });
+    document.querySelectorAll('[data-sort]').forEach(button => button.addEventListener('click', () => {
+      const key = button.dataset.sort;
+      if (state.sort.key === key) state.sort.dir = state.sort.dir === 'asc' ? 'desc' : 'asc';
+      else { state.sort.key = key; state.sort.dir = 'asc'; }
+      state.page = 1; renderTable();
+    }));
+    ['factor', 'library', 'category', 'status', 'bias', 'run', 'oos'].forEach(key => {
+      const id = key === 'bias' ? 'filter-bias' : key === 'run' ? 'filter-run' : `filter-${key}`;
+      const handler = event => { state.filters[key] = event.target.value; state.page = 1; renderTable(); };
+      // 因子 ID 输入框加 150ms 防抖，避免每次按键都整表重渲染
+      document.getElementById(id).addEventListener(key === 'factor' ? 'input' : 'change', key === 'factor' ? debounce(handler, 150) : handler);
+    });
+    document.getElementById('filter-failed').addEventListener('change', event => { state.filters.failed = event.target.checked; state.page = 1; renderTable(); });
+    document.getElementById('filter-not-checked').addEventListener('change', event => { state.filters.notChecked = event.target.checked; state.page = 1; renderTable(); });
+    document.getElementById('page-size').addEventListener('change', event => { state.pageSize = Number(event.target.value) || 25; state.page = 1; renderTable(); });
+    document.getElementById('page-prev').addEventListener('click', () => { state.page = Math.max(1, state.page - 1); renderTable(); });
+    document.getElementById('page-next').addEventListener('click', () => { state.page += 1; renderTable(); });
+    document.getElementById('factor-tbody').addEventListener('click', event => {
+      const checkBtn = event.target.closest('[data-run-check]');
+      if (checkBtn) {
+        event.stopPropagation();
+        startFactorCheck(checkBtn.dataset.runCheck);
+        return;
+      }
+      const target = event.target.closest('[data-open-factor]');
+      const row = event.target.closest('tr[data-factor-id]');
+      if (target) event.stopPropagation();
+      if (target || row) openDetail((target || row).dataset.openFactor || (target || row).dataset.factorId);
+    });
+    document.getElementById('factor-tbody').addEventListener('keydown', event => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      const row = event.target.closest('tr[data-factor-id]');
+      if (row) { event.preventDefault(); openDetail(row.dataset.factorId); }
+    });
+    // 因子特征视图行内操作：计算指标（开抽屉评估指标 tab）/ 删除（下架到 factor_trash/）
+    document.getElementById('features-tbody').addEventListener('click', event => {
+      const metricsBtn = event.target.closest('[data-open-metrics]');
+      if (metricsBtn) { openDetail(metricsBtn.dataset.openMetrics, 'metrics'); return; }
+      const deleteBtn = event.target.closest('[data-delete-factor]');
+      if (deleteBtn) deleteFactorById(deleteBtn.dataset.deleteFactor);
+    });
+    document.getElementById('drawer-close').addEventListener('click', closeDrawer);
+    document.getElementById('drawer-mask').addEventListener('click', closeDrawer);
+    document.querySelectorAll('.drawer-tab').forEach(tab => {
+      const select = () => {
+        state.detailTab = tab.dataset.detailTab;
+        renderDrawer();
+        // 评估指标按需懒加载：仅切到该 tab 时才触发后端计算
+        if (state.detailTab === 'metrics') ensureMetrics();
+      };
+      tab.addEventListener('click', select);
+      tab.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select(); } });
+    });
+    document.addEventListener('keydown', event => { if (event.key === 'Escape') { closeCorrModal(); closeDrawer(); } });
+
+    // 头顶时间对照：UTC 与 SIN(+8)，秒级刷新
+    function tickClocks() {
+      const pad = (n) => String(n).padStart(2, '0');
+      const fmt = (d) => `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+      const now = Date.now();
+      document.getElementById('clock-utc').textContent = fmt(new Date(now));
+      document.getElementById('clock-sin').textContent = fmt(new Date(now + 8 * 3600 * 1000));
+    }
+    tickClocks();
+    setInterval(tickClocks, 1000);
+
+    loadOverview();
+    loadFeatures();
+    // 30 秒空闲刷新：页面隐藏或批次运行中时跳过本次请求
+    setInterval(() => { if (!document.hidden && !state.running) loadOverview(); }, 30000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,2169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CryptoPaperLab — 量化模拟盘</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+  <style>
+    :root {
+      --bg: #0b0e11;
+      --panel: #151a20;
+      --panel-2: #1e2329;
+      --border: #2b3139;
+      --text: #eaecef;
+      --text-2: #848e9c;
+      --accent: #f0b90b;
+      --up: #0ecb81;
+      --down: #f6465d;
+      --hover: #2b3139;
+      --input-bg: #0b0e11;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      --factory-z: 90;
+    }
+
+    /* Loading modal */
+    .loading-modal {
+      position: fixed; inset: 0; background: rgba(11,14,17,0.92);
+      z-index: 2000; display: grid; place-items: center;
+      transition: opacity .3s ease, visibility .3s ease;
+    }
+    .loading-modal.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+    .loading-box { text-align: center; color: var(--text); }
+    .spinner {
+      width: 40px; height: 40px; border: 3px solid var(--border);
+      border-top-color: var(--accent); border-radius: 50%;
+      animation: spin 1s linear infinite; margin: 0 auto 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; }
+    button, input, select { font-family: inherit; color: inherit; }
+    button { cursor: pointer; border: none; background: var(--panel-2); }
+    button:hover { background: var(--hover); }
+    input, select { background: var(--input-bg); border: 1px solid var(--border); padding: 6px 8px; border-radius: 4px; outline: none; }
+    input:focus, select:focus { border-color: var(--accent); }
+    a { color: var(--accent); text-decoration: none; }
+
+    /* Header / Status Bar */
+    header {
+      height: 48px; background: var(--panel); border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between; padding: 0 16px;
+      position: sticky; top: 0; z-index: 100;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px; white-space: nowrap; }
+    .brand small { color: var(--text-2); font-size: 11px; font-weight: 400; line-height: 1.2; }
+    /* 头顶时间对照：UTC 与 SIN(+8)，秒级刷新 */
+    .header-clocks { flex: 1; display: flex; justify-content: center; gap: 22px; font-size: 12px; color: var(--text-2); }
+    .header-clocks .clock b { color: var(--accent); margin-right: 4px; }
+    .header-clocks .clock .clock-mono { color: var(--text); font-size: 13px; letter-spacing: .5px; font-family: var(--mono); }
+    .header-clocks .clock small { color: var(--text-2); }
+    .status-bar { display: flex; align-items: center; gap: 20px; color: var(--text-2); font-size: 12px; }
+    .status-bar span { display: flex; align-items: center; gap: 6px; }
+    .status-bar .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-2); flex-shrink: 0; flex: 0 0 7px; }
+    .status-bar .dot.ok { background: var(--up); box-shadow: 0 0 6px var(--up); }
+    .status-bar .dot.warn { background: var(--accent); }
+    .status-bar .dot.err { background: var(--down); }
+    #backfill-status-wrap { white-space: nowrap; }
+    .tz-select { background: var(--panel-2); border-color: var(--border); color: var(--text); font-size: 12px; padding: 4px 6px; }
+
+    /* Layout */
+    .app { height: calc(100vh - 48px); display: grid; grid-template-columns: var(--col-left, 2fr) 6px var(--col-right, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); gap: 0; background: var(--border); }
+    .app > .col-left, .app > .col-right { grid-row: 1 / span 2; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 1px; background: var(--border); }
+    .app > .col-left { grid-column: 1; }
+    .app > .col-right { grid-column: 3; }
+    .app > .splitter-h { grid-column: 2; grid-row: 1 / span 2; cursor: col-resize; background: var(--border); position: relative; align-self: stretch; }
+    .app > .splitter-h:hover { background: var(--accent); }
+    .app > .splitter-h::after { content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 2px; height: 32px; background: var(--text-2); border-radius: 1px; }
+    .panel { background: var(--panel); display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+    .col-left > .panel:first-child { flex: 0 0 var(--row-top, 70%); min-height: 0; }
+    .col-left > .row-split { flex: 0 0 6px; cursor: row-resize; background: var(--border); position: relative; }
+    .col-left > .row-split:hover { background: var(--accent); }
+    .col-left > .row-split::after { content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 32px; height: 2px; background: var(--text-2); border-radius: 1px; }
+    .col-left > .panel.bottom-tabs { flex: 0 0 var(--row-bot, 30%); min-height: 0; }
+    .col-right > .panel.full-height { flex: 1 1 auto; min-height: 0; }
+    .panel-header { height: 38px; padding: 0 12px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; background: var(--panel-2); }
+    .panel-title { font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+    .panel-actions { display: flex; align-items: center; gap: 8px; }
+    .panel-actions button, .panel-actions select { font-size: 11px; padding: 4px 8px; border-radius: 3px; border: 1px solid var(--border); background: var(--panel); }
+    .panel-actions button:hover { background: var(--hover); }
+    .panel-body { flex: 1; overflow: auto; padding: 10px; position: relative; }
+    .bottom-tabs { grid-column: 1 / -1; }
+
+    /* Market panel */
+    .market-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+    .market-stats { display: flex; gap: 18px; margin-bottom: 8px; }
+    .ma-toolbar {
+      display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+      padding: 6px 8px; margin-bottom: 6px;
+      background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px;
+      font-size: 11px; color: var(--text-2);
+    }
+    .ma-toolbar .ma-title { color: var(--text-2); margin-right: 4px; font-weight: 600; }
+    .ma-chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 8px; border-radius: 12px;
+      border: 1px solid var(--border); background: transparent;
+      color: var(--text-2); cursor: pointer; user-select: none;
+      border-left: 3px solid var(--chip-color, var(--border));
+    }
+    .ma-chip input { display: none; }
+    .ma-chip.checked {
+      background: rgba(255,255,255,0.04);
+      color: var(--chip-color, var(--text));
+      border-color: var(--chip-color, var(--border));
+    }
+    .ma-chip:hover { background: rgba(255,255,255,0.06); }
+    .ma-chip.all { border-left-color: var(--accent); color: var(--accent); }
+    .stat { display: flex; flex-direction: column; gap: 2px; }
+    .stat .label { color: var(--text-2); font-size: 11px; }
+    .stat .value { font-family: var(--mono); font-size: 15px; font-weight: 600; }
+    .stat .value.up { color: var(--up); }
+    .stat .value.down { color: var(--down); }
+    #chart-kline { width: 100%; height: calc(100% - 86px); min-height: 0; }
+
+    /* Trading panel */
+    .order-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .order-form .field { display: flex; flex-direction: column; gap: 4px; }
+    .order-form .field.full { grid-column: 1 / -1; }
+    .order-form label { color: var(--text-2); font-size: 11px; }
+    .order-form .radio-group { display: flex; gap: 6px; }
+    .order-form .radio-group label { flex: 1; display: flex; align-items: center; justify-content: center; gap: 4px; padding: 6px; border: 1px solid var(--border); border-radius: 4px; cursor: pointer; font-size: 12px; color: var(--text); }
+    .order-form .radio-group input { display: none; }
+    .order-form .radio-group input:checked + span { color: var(--accent); }
+    .order-form .radio-group label:has(input:checked) { border-color: var(--accent); background: rgba(240,185,11,0.08); }
+    .order-form .side-long:checked + span { color: var(--up) !important; }
+    .order-form .side-short:checked + span { color: var(--down) !important; }
+    .order-form label:has(.side-long:checked) { border-color: var(--up) !important; background: rgba(14,203,129,0.08) !important; }
+    .order-form label:has(.side-short:checked) { border-color: var(--down) !important; background: rgba(246,70,93,0.08) !important; }
+    .btn-submit { grid-column: 1 / -1; padding: 10px; border-radius: 4px; font-weight: 700; background: var(--accent); color: #000; }
+    .btn-submit:hover { filter: brightness(1.05); }
+    .account-mini { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .account-mini .stat .value { font-size: 13px; }
+
+    /* Tabs */
+    .tabs { display: flex; border-bottom: 1px solid var(--border); background: var(--panel-2); }
+    .tab { padding: 10px 14px; cursor: pointer; border-bottom: 2px solid transparent; color: var(--text-2); font-size: 12px; white-space: nowrap; }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tab-content { display: none; height: calc(100% - 38px); overflow: auto; padding: 10px; }
+    .tab-content.active { display: block; }
+
+    /* Toggle Switch & Cleaning Panel */
+    .switch { position: relative; display: inline-block; width: 36px; height: 20px; flex-shrink: 0; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .switch-slider { position: absolute; cursor: pointer; inset: 0; background: var(--border); border-radius: 20px; transition: .2s; }
+    .switch-slider::before { content: ""; position: absolute; height: 14px; width: 14px; left: 3px; bottom: 3px; background: var(--text-2); border-radius: 50%; transition: .2s; }
+    .switch input:checked + .switch-slider { background: var(--accent); }
+    .switch input:checked + .switch-slider::before { transform: translateX(16px); background: #000; }
+    .cleaning-panel { max-width: 720px; }
+    .cleaning-master { display: flex; align-items: center; gap: 12px; padding: 14px 16px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 14px; font-size: 13px; }
+    .cleaning-master .master-text { display: flex; flex-direction: column; gap: 2px; }
+    .cleaning-master .master-text small { color: var(--text-2); font-size: 11px; }
+    .cleaning-rules { display: flex; flex-direction: column; gap: 8px; }
+    .cleaning-rule { display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; }
+    .cleaning-rule .rule-info { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+    .cleaning-rule .rule-info strong { font-size: 13px; }
+    .cleaning-rule .rule-info .hint { font-size: 11px; color: var(--text-2); display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+    .cleaning-rule .rule-info input[type="number"], .cleaning-rule .rule-info select { font-size: 11px; padding: 3px 6px; width: auto; }
+    .cleaning-rule:has(.switch input:not(:checked)) { opacity: 0.55; }
+    #cleaning-status { margin-top: 12px; font-size: 12px; }
+
+    /* Upload Pane (因子/策略 tab 右侧上传区) */
+    .upload-pane { display: flex; flex-direction: column; gap: 10px; min-width: 0; height: 100%; overflow: auto; }
+    .upload-head { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; }
+    .upload-head strong { font-size: 13px; }
+    .upload-head .hint { font-size: 11px; color: var(--text-2); }
+    .dropzone { border: 2px dashed var(--border); border-radius: 6px; padding: 20px 10px; text-align: center; cursor: pointer; transition: .15s; background: var(--panel-2); }
+    .dropzone:hover { border-color: var(--accent); background: rgba(240,185,11,0.05); }
+    .dropzone.drag-over { border-color: var(--accent); background: rgba(240,185,11,0.12); transform: scale(1.01); }
+    .dz-inner { display: flex; flex-direction: column; gap: 6px; align-items: center; }
+    .dz-icon { font-size: 28px; color: var(--text-2); line-height: 1; }
+    .dropzone:hover .dz-icon, .dropzone.drag-over .dz-icon { color: var(--accent); }
+    .dz-text { font-size: 12px; color: var(--text-2); line-height: 1.5; }
+    .dz-link { color: var(--accent); cursor: pointer; text-decoration: underline; }
+    .dz-hint { font-size: 11px; color: var(--text-2); opacity: 0.7; margin-top: 2px; }
+    .upload-spec { padding: 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; font-size: 11px; color: var(--text-2); }
+    .upload-spec .spec-title { font-weight: 600; color: var(--text-1); margin-bottom: 4px; }
+    .upload-spec .spec-sub { font-weight: 600; color: var(--accent); margin: 8px 0 2px; }
+    .upload-spec ul { margin: 2px 0 2px 16px; padding: 0; }
+    .upload-spec li { margin: 2px 0; line-height: 1.4; }
+    .upload-spec code { background: rgba(240,185,11,0.1); color: var(--accent); padding: 1px 4px; border-radius: 2px; font-size: 10px; }
+    .upload-status { font-size: 12px; min-height: 18px; }
+    .upload-status.ok { color: var(--up); }
+    .upload-status.err { color: var(--down); }
+
+    /* Modal & Backtest */
+    .btn-accent { background: var(--accent); color: #0b0e11; font-weight: 600; border: none; }
+    .btn-accent:hover { filter: brightness(1.1); }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 1000; display: flex; align-items: center; justify-content: center; }
+    .modal-box { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; width: 560px; max-width: 92vw; max-height: 86vh; display: flex; flex-direction: column; box-shadow: 0 8px 32px rgba(0,0,0,0.4); }
+    .modal-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+    .modal-head strong { font-size: 14px; }
+    .modal-close { cursor: pointer; font-size: 22px; color: var(--text-2); line-height: 1; padding: 0 4px; }
+    .modal-close:hover { color: var(--text-1); }
+    .modal-body { padding: 16px; overflow: auto; }
+    .bt-step { font-size: 12px; color: var(--text-2); margin: 6px 0 4px; font-weight: 600; }
+    .bt-radio-row { display: flex; gap: 16px; margin: 6px 0 12px; }
+    .bt-radio-row label { display: flex; align-items: center; gap: 4px; font-size: 13px; cursor: pointer; }
+    .bt-factor-pick { width: 100%; max-height: 140px; overflow: auto; border: 1px solid var(--border); border-radius: 4px; padding: 4px; background: var(--panel-2); margin: 4px 0 8px; }
+    .bt-factor-pick label { display: block; padding: 3px 6px; font-size: 12px; cursor: pointer; }
+    .bt-factor-pick label:hover { background: rgba(240,185,11,0.08); }
+    .bt-factor-pick input { margin-right: 6px; }
+    .bt-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 6px 0; }
+    .bt-form-row .field { display: flex; flex-direction: column; gap: 3px; }
+    .bt-form-row label { font-size: 11px; color: var(--text-2); }
+    .bt-form-row input, .bt-form-row select { background: var(--panel-2); border: 1px solid var(--border); color: var(--text-1); border-radius: 3px; padding: 6px 8px; font-size: 12px; font-family: var(--mono); }
+    .bt-result { margin-top: 14px; }
+    .bt-stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 8px 0; }
+    .bt-stat { background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; }
+    .bt-stat .label { font-size: 11px; color: var(--text-2); }
+    .bt-stat .value { font-size: 16px; font-weight: 600; font-family: var(--mono); margin-top: 2px; }
+    .bt-stat .value.up { color: var(--up); }
+    .bt-stat .value.down { color: var(--down); }
+    .bt-positions { width: 100%; border-collapse: collapse; font-size: 11px; margin: 8px 0; }
+    .bt-positions th, .bt-positions td { padding: 5px 6px; border-bottom: 1px solid var(--border); text-align: left; }
+    .bt-positions th { color: var(--text-2); font-weight: 500; }
+    .bt-flow-section { margin-top: 10px; }
+    .bt-flow-section .section-title { color: var(--text-2); font-size: 11px; margin-bottom: 4px; }
+    .bt-flow { width: 100%; border-collapse: collapse; font-size: 11px; }
+    .bt-flow th, .bt-flow td { padding: 5px 6px; border-bottom: 1px solid var(--border); text-align: left; }
+    .bt-flow th { color: var(--text-2); font-weight: 500; }
+    .bt-flow tr.buy td { color: var(--up); }
+    .bt-flow tr.sell td { color: var(--down); }
+    .bt-export { margin-top: 12px; }
+
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    th { color: var(--text-2); font-weight: 500; position: sticky; top: 0; background: var(--panel); }
+    tr:hover td { background: rgba(255,255,255,0.02); }
+    .up { color: var(--up); }
+    .down { color: var(--down); }
+    .badge { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 11px; background: var(--panel-2); border: 1px solid var(--border); }
+    .badge.active { border-color: var(--up); color: var(--up); }
+    .badge.draft { border-color: var(--text-2); color: var(--text-2); }
+    .badge.invalid { border-color: var(--down); color: var(--down); }
+    .badge.deprecated { border-color: var(--accent); color: var(--accent); }
+    .text-right { text-align: right; }
+    .mono { font-family: var(--mono); }
+    .empty { color: var(--text-2); padding: 30px; text-align: center; }
+
+    /* Factor / rule mini cards */
+    .filter-bar { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; flex-wrap: wrap; }
+    .filter-bar input { min-width: 180px; }
+    .factor-row { cursor: pointer; }
+    .factor-row.selected td { background: rgba(240,185,11,0.08); }
+    .rule-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin-bottom: 12px; }
+    .rule-form .field { display: flex; flex-direction: column; gap: 4px; }
+    .rule-form label { color: var(--text-2); font-size: 11px; }
+    .hint { color: var(--text-2); font-size: 11px; margin-top: 4px; }
+    .error { color: var(--down); font-size: 11px; }
+
+    /* Strategy Factory — full screen, three resizable panes */
+    .factory-app {
+      display: none; position: fixed; inset: 48px 0 0 0; background: var(--bg);
+      z-index: var(--factory-z); flex-direction: column;
+    }
+    .factory-app.active { display: flex; }
+    .factory-toolbar {
+      height: 40px; background: var(--panel); border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between; padding: 0 12px;
+    }
+    .factory-title { font-weight: 600; color: var(--accent); }
+    .factory-actions { display: flex; gap: 10px; }
+    .factory-actions button { padding: 6px 12px; border-radius: 4px; font-size: 12px; }
+    .factory-layout {
+      flex: 1; display: grid; grid-template-columns: 320px 6px 1fr 6px 1fr;
+      min-height: 0; overflow: hidden;
+    }
+    .factory-pane { min-width: 180px; overflow: auto; padding: 12px; background: var(--panel); }
+    .factory-pane h4 { margin: 0 0 10px; color: var(--accent); font-weight: 600; }
+    .factory-pane .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+    .factory-pane label { color: var(--text-2); font-size: 11px; }
+    .factory-pane input, .factory-pane select, .factory-pane textarea {
+      width: 100%; background: var(--input-bg); border: 1px solid var(--border);
+      padding: 6px 8px; border-radius: 4px; outline: none; color: var(--text);
+    }
+    .factory-pane textarea { resize: vertical; }
+    .factory-code { font-family: var(--mono); font-size: 12px; white-space: pre; }
+    .factory-desc { color: var(--text-2); font-size: 13px; line-height: 1.6; }
+    .resize-handle {
+      background: var(--border); cursor: col-resize; position: relative;
+      transition: background .2s; display: grid; place-items: center;
+      flex-shrink: 0;
+    }
+    .resize-handle.row { cursor: row-resize; width: auto; height: 6px; }
+    .resize-handle.col { width: 6px; height: auto; }
+    .resize-handle:hover, .resize-handle.dragging { background: var(--accent); }
+    .resize-handle.col::after {
+      content: ''; width: 2px; height: 24px; border-radius: 1px; background: var(--text-2);
+    }
+    .resize-handle.row::after {
+      content: ''; width: 24px; height: 2px; border-radius: 1px; background: var(--text-2);
+    }
+    /* 全屏时的可拖动分割条：覆盖整个 1px gap，看起来更明显 */
+    .splitter { background: var(--border); position: relative; }
+    .splitter:hover { background: var(--accent); }
+    .splitter.h { cursor: col-resize; width: 6px; align-self: stretch; }
+    .splitter.v { cursor: row-resize; height: 6px; align-self: stretch; }
+    .splitter.h::after { content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 2px; height: 32px; background: var(--text-2); border-radius: 1px; }
+    .splitter.v::after { content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 32px; height: 2px; background: var(--text-2); border-radius: 1px; }
+    .top-nav { display: flex; gap: 4px; }
+    .top-nav button {
+      padding: 6px 12px; border-radius: 4px; font-size: 12px;
+      background: transparent; color: var(--text-2); border: 1px solid transparent;
+    }
+    .top-nav button:hover { color: var(--text); }
+    .top-nav button.active { color: var(--accent); border-color: var(--accent); background: rgba(240,185,11,0.08); }
+
+    /* Responsive */
+    @media (max-width: 1100px) {
+      .app { grid-template-columns: 1fr; grid-template-rows: 520px auto auto; }
+      #chart-kline { height: 320px; }
+      .bottom-tabs { grid-column: 1; }
+    }
+  </style>
+</head>
+<body>
+  <div id="loading-modal" class="loading-modal">
+    <div class="loading-box">
+      <div class="spinner"></div>
+      <p>实时数据加载中，请稍等</p>
+    </div>
+  </div>
+
+  <header>
+    <div class="brand">
+      <img src="lab.png" alt="CryptoPaperLab" style="width:26px;height:26px;border-radius:50%;object-fit:cover">
+      <span>CryptoPaperLab</span>
+      <small>同济大学 · Zhong Li</small>
+    </div>
+    <div class="header-clocks" aria-label="时间对照">
+      <span class="clock"><b>UTC</b> <span class="clock-mono" id="clock-utc">—</span></span>
+      <span class="clock"><b>SIN</b> <span class="clock-mono" id="clock-sin">—</span> <small>(+8)</small></span>
+    </div>
+    <div class="status-bar">
+      <span id="health"><span class="dot"></span>API</span>
+      <span id="backfill-status-wrap"><span id="backfill-status-dot" class="dot"></span><span id="backfill-status-text">历史回填</span></span>
+      <span id="sched-status">调度器: --</span>
+      <span id="tick-count">Ticks: --</span>
+      <span id="next-tick">下次: --</span>
+      <span id="clock">--</span>
+      <select id="timezone" class="tz-select">
+        <option value="UTC">UTC</option>
+        <option value="local" selected>本地</option>
+        <option value="Asia/Shanghai">北京</option>
+      </select>
+      <nav class="top-nav">
+        <button id="nav-main" class="active" onclick="showApp('main')">主界面</button>
+        <button id="nav-factory" onclick="showApp('factory')" style="display:none">策略工厂</button>
+        <button onclick="location.href='bias-control.html'">因子库</button>
+        <button onclick="location.href='about.html'">关于</button>
+      </nav>
+    </div>
+  </header>
+
+  <div class="app">
+    <div class="col-left">
+    <!-- Market Panel -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">行情 <select id="symbol-select"></select></div>
+        <div class="panel-actions">
+          <button onclick="loadKlines()">刷新 K线</button>
+          <button onclick="loadTickers()">刷新行情</button>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div class="market-toolbar">
+          <div class="market-stats">
+            <div class="stat"><span class="label">最新价</span><span class="value" id="stat-price">--</span></div>
+            <div class="stat"><span class="label">24h 涨跌</span><span class="value" id="stat-change">--</span></div>
+            <div class="stat"><span class="label">资金费率</span><span class="value mono" id="stat-funding">--</span></div>
+            <div class="stat"><span class="label">持仓量</span><span class="value mono" id="stat-oi">--</span></div>
+          </div>
+          <div class="panel-actions">
+            <select id="kline-range" onchange="onKlineRangeChange()">
+              <option value="7y" selected>7 年</option>
+              <option value="1y">1 年</option>
+              <option value="1M">1 月</option>
+              <option value="1w">1 周</option>
+              <option value="1d">1 天</option>
+            </select>
+            <select id="kline-period" onchange="onKlineRangeChange()">
+              <option value="auto">自动</option>
+              <option value="1m">1 分钟</option>
+              <option value="5m">5 分钟</option>
+              <option value="15m">15 分钟</option>
+              <option value="1h">1 小时</option>
+              <option value="4h">4 小时</option>
+              <option value="1d">1 天</option>
+              <option value="1w">1 周</option>
+            </select>
+          </div>
+        </div>
+        <div class="ma-toolbar" id="ma-toolbar">
+          <span class="ma-title">均线叠加</span>
+          <!-- 复选框由 renderMAToolbar() 动态渲染 -->
+        </div>
+        <div id="chart-kline"></div>
+      </div>
+    </div>
+    <div class="row-split" data-resize="row-left" title="拖动调整上下分割"></div>
+
+    <!-- 持仓 / 净值 / 信号 / 清洗 Tab 容器 (左下) -->
+    <div class="panel bottom-tabs">
+      <div class="tabs">
+        <div class="tab active" data-tab="positions">持仓</div>
+        <div class="tab" data-tab="equity">净值</div>
+        <div class="tab" data-tab="signals">信号</div>
+        <div class="tab" data-tab="cleaning">清洗</div>
+      </div>
+
+      <div class="tab-content active" id="tab-positions">
+        <table>
+          <thead><tr><th>标的</th><th>类型</th><th>方向</th><th class="text-right">数量</th><th class="text-right">开仓价</th><th class="text-right">杠杆</th><th class="text-right">保证金</th><th class="text-right">未实现盈亏</th><th class="text-right">强平价</th></tr></thead>
+          <tbody id="positions-body"><tr><td colspan="9" class="empty">暂无持仓</td></tr></tbody>
+        </table>
+        <div class="account-mini">
+          <div class="stat"><span class="label">净值</span><span class="value mono" id="acc-equity">--</span></div>
+          <div class="stat"><span class="label">余额</span><span class="value mono" id="acc-wallet">--</span></div>
+          <div class="stat"><span class="label">保证金</span><span class="value mono" id="acc-margin">--</span></div>
+          <div class="stat"><span class="label">未实现盈亏</span><span class="value mono" id="acc-upnl">--</span></div>
+          <div class="stat"><span class="label">胜率</span><span class="value mono" id="acc-winrate">--</span></div>
+          <div class="stat"><span class="label">最大回撤</span><span class="value mono" id="acc-dd">--</span></div>
+        </div>
+      </div>
+
+      <div class="tab-content" id="tab-equity">
+        <div id="chart-equity" style="width:100%;height:300px;"></div>
+      </div>
+
+      <div class="tab-content" id="tab-signals">
+        <form class="rule-form" id="rule-form" onsubmit="return createRule(event)">
+          <div class="field"><label>因子</label><select name="factor_id" id="rule-factor"></select></div>
+          <div class="field"><label>标的</label><input type="text" name="symbol" value="BTC/USDT" required></div>
+          <div class="field"><label>方向</label><select name="direction"><option value="long">long</option><option value="short">short</option><option value="both">both</option></select></div>
+          <div class="field"><label>入场阈值</label><input type="number" name="entry_threshold" step="0.1" value="2" required></div>
+          <div class="field"><label>离场阈值</label><input type="number" name="exit_threshold" step="0.1" value="0.5" required></div>
+          <div class="field"><label>权重</label><input type="number" name="weight" step="0.01" value="0.1" required></div>
+          <div class="field"><label>Z-Score 窗口</label><input type="number" name="zscore_window" step="1" value="30" required></div>
+          <div class="field"><label>启用</label><select name="enabled"><option value="true">是</option><option value="false">否</option></select></div>
+          <button type="submit" class="btn-submit" style="grid-column:1 / -1;">创建规则</button>
+        </form>
+        <div id="rule-result" class="hint"></div>
+        <table>
+          <thead><tr><th>ID</th><th>因子</th><th>标的</th><th>方向</th><th class="text-right">入场</th><th class="text-right">离场</th><th class="text-right">权重</th><th class="text-right">窗口</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody id="rules-body"><tr><td colspan="10" class="empty">暂无规则</td></tr></tbody>
+        </table>
+      </div>
+
+      <div class="tab-content" id="tab-cleaning">
+        <div class="cleaning-panel">
+          <div class="cleaning-master">
+            <label class="switch">
+              <input type="checkbox" id="cleaning-enabled" onchange="saveCleaningConfig()">
+              <span class="switch-slider"></span>
+            </label>
+            <div class="master-text">
+              <strong>启用数据清洗</strong>
+              <small>开启后因子计算、策略引擎与 K线图表均使用清洗后数据；撮合层不受影响</small>
+            </div>
+          </div>
+          <div class="cleaning-rules">
+            <div class="cleaning-rule">
+              <label class="switch">
+                <input type="checkbox" id="rule-pin_bar" onchange="saveCleaningConfig()">
+                <span class="switch-slider"></span>
+              </label>
+              <div class="rule-info">
+                <strong>插针数据清洗</strong>
+                <span class="hint">影线/实体比 > <input type="number" id="pin-ratio" value="3.0" step="0.5" min="1.5" onchange="saveCleaningConfig()"> 时裁剪 OHLC 到实体范围</span>
+              </div>
+            </div>
+            <div class="cleaning-rule">
+              <label class="switch">
+                <input type="checkbox" id="rule-gap_fill" onchange="saveCleaningConfig()">
+                <span class="switch-slider"></span>
+              </label>
+              <div class="rule-info">
+                <strong>缺口填充</strong>
+                <span class="hint">缺失 1m bar 填充方法：
+                  <select id="gap-method" onchange="saveCleaningConfig()">
+                    <option value="ffill">前向填充</option>
+                    <option value="interpolate">线性插值</option>
+                  </select>
+                </span>
+              </div>
+            </div>
+            <div class="cleaning-rule">
+              <label class="switch">
+                <input type="checkbox" id="rule-downtime_mask" onchange="saveCleaningConfig()">
+                <span class="switch-slider"></span>
+              </label>
+              <div class="rule-info">
+                <strong>交易所停机掩码</strong>
+                <span class="hint">连续零成交量 > <input type="number" id="downtime-bars" value="10" step="1" min="1" onchange="saveCleaningConfig()"> 根时掩码为 NaN</span>
+              </div>
+            </div>
+          </div>
+          <div id="cleaning-status" class="hint"></div>
+        </div>
+      </div>
+    </div>
+    </div>
+
+    <div class="splitter-h" data-resize="col-main" title="拖动调整左右分割"></div>
+    <div class="col-right">
+    <!-- 右侧通栏 tab 容器（下单/挂单&成交/因子/策略），跨满右列 -->
+    <div class="panel bottom-tabs full-height">
+      <div class="tabs">
+        <div class="tab active" data-tab="orders">下单</div>
+        <div class="tab" data-tab="history">挂单 / 成交</div>
+        <div class="tab" data-tab="factors">因子</div>
+        <div class="tab" data-tab="strategies">策略</div>
+      </div>
+
+      <div class="tab-content active" id="tab-orders">
+        <form class="order-form" id="order-form" onsubmit="return placeOrder(event)">
+          <div class="field full">
+            <div class="radio-group">
+              <label><input type="radio" name="side" value="long" class="side-long" checked><span>开多</span></label>
+              <label><input type="radio" name="side" value="short" class="side-short"><span>开空</span></label>
+              <label><input type="radio" name="side" value="close"><span>平仓</span></label>
+            </div>
+          </div>
+          <div class="field">
+            <label>标的</label>
+            <input type="text" name="symbol" id="order-symbol" value="BTC/USDT" required>
+          </div>
+          <div class="field">
+            <label>类型</label>
+            <select name="order_type"><option value="market">市价</option><option value="limit">限价</option></select>
+          </div>
+          <div class="field">
+            <label>数量</label>
+            <input type="number" name="qty" step="0.0001" value="0.01" required>
+          </div>
+          <div class="field">
+            <label>价格（限价）</label>
+            <input type="number" name="price" step="0.01" placeholder="市价留空">
+          </div>
+          <div class="field">
+            <label>杠杆</label>
+            <input type="number" name="leverage" step="1" min="1" max="20" value="10">
+          </div>
+          <div class="field">
+            <label>市场</label>
+            <select name="market_type"><option value="">自动</option><option value="perp">永续</option><option value="spot">现货</option></select>
+          </div>
+          <button type="submit" class="btn-submit">提交订单</button>
+        </form>
+        <div id="order-result" class="hint"></div>
+      </div>
+
+      <div class="tab-content" id="tab-history">
+        <div class="filter-bar">
+          <select id="order-filter-top" onchange="loadOrders()">
+            <option value="">全部</option><option value="open">挂单中</option><option value="filled">已成交</option><option value="cancelled">已撤单</option><option value="rejected">已拒绝</option>
+          </select>
+          <button onclick="loadOrders()">刷新</button>
+          <button onclick="loadTrades()">刷新成交</button>
+          <button onclick="loadAccount()">刷新</button>
+        </div>
+        <h4 style="margin:8px 0;color:var(--text-2);font-weight:500;">订单</h4>
+        <table>
+          <thead><tr><th>ID</th><th>标的</th><th>方向</th><th>类型</th><th class="text-right">数量</th><th class="text-right">价格</th><th class="text-right">杠杆</th><th>状态</th><th>来源</th><th>时间</th><th>原因</th></tr></thead>
+          <tbody id="orders-body"><tr><td colspan="11" class="empty">暂无订单</td></tr></tbody>
+        </table>
+        <h4 style="margin:16px 0 8px;color:var(--text-2);font-weight:500;">成交历史</h4>
+        <table>
+          <thead><tr><th>ID</th><th>订单</th><th>标的</th><th>方向</th><th class="text-right">数量</th><th class="text-right">价格</th><th class="text-right">手续费</th><th>时间</th><th>强平</th></tr></thead>
+          <tbody id="trades-body"><tr><td colspan="9" class="empty">暂无成交</td></tr></tbody>
+        </table>
+      </div>
+
+      <div class="tab-content" id="tab-factors">
+        <div style="display:grid;grid-template-columns:7fr 3fr;gap:10px;height:100%;">
+          <div style="display:flex;flex-direction:column;min-width:0;min-height:0;">
+            <div class="filter-bar">
+              <input type="text" id="factor-search" placeholder="搜索因子 ID / 名称 / 类别" oninput="renderFactors()">
+              <select id="factor-category" onchange="renderFactors()"><option value="">全部类别</option></select>
+              <button onclick="loadFactors()">刷新</button>
+              <button onclick="exportFactorsExcel()">导出 Excel</button>
+              <span class="hint" id="factor-check-count"></span>
+              <button onclick="loadFactorSeries()">加载选中因子时序</button>
+              <button class="btn-accent" onclick="openFactorBacktestModal()">自定义回测</button>
+              <span class="hint">按住 Ctrl/Cmd 点击可多选叠加</span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1.4fr;gap:10px;flex:1;min-height:0;">
+              <div style="overflow:auto;border:1px solid var(--border);border-radius:4px;">
+                <table>
+                  <thead><tr><th><input type="checkbox" id="factor-check-all" onclick="toggleCheckAllFactors(this.checked)" title="全选当前筛选结果"></th><th>ID</th><th>名称</th><th>类别</th><th>状态</th><th>最新值</th></tr></thead>
+                  <tbody id="factors-body"></tbody>
+                </table>
+              </div>
+              <div style="min-width:0;">
+                <div id="chart-factor" style="width:100%;height:260px;border:1px solid var(--border);border-radius:4px;"></div>
+                <div id="factor-detail" style="margin-top:8px;color:var(--text-2);font-size:12px;"></div>
+              </div>
+            </div>
+          </div>
+          <div class="upload-pane">
+            <div class="upload-head">
+              <strong>上传因子文档</strong>
+              <span class="hint">.md（frontmatter + 10 章节） · <a href="about.html?v=3#upload-spec" target="_blank" style="color:var(--accent);">规范文档</a></span>
+            </div>
+            <div class="dropzone" id="dropzone-factor"
+                 ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event,'factor')">
+              <input type="file" id="file-input-factor" accept=".md" hidden onchange="onFilePick(event,'factor')">
+              <div class="dz-inner">
+                <div class="dz-icon">+</div>
+                <div class="dz-text">拖入 .md 文件<br>或<span class="dz-link" onclick="document.getElementById('file-input-factor').click()">点击选取</span></div>
+                <div class="dz-hint">命名：<FACTOR-ID>_&lt;name&gt;.md</div>
+              </div>
+            </div>
+            <div class="upload-spec">
+              <div class="spec-title">文件要求（factors/TEMPLATE.md）</div>
+              <ul>
+                <li>frontmatter：factor_id / name / category / version / status / frequency / lookback_bars / inputs / params / implementation / entry</li>
+                <li>正文 10 章节：概述/数学定义/输入参数/计算步骤/输出解释/数据依赖/边界条件/适用范围/有效性检验/变更日志</li>
+                <li>数学定义章节至少 1 个 <code>$$...$$</code> 公式块</li>
+              </ul>
+            </div>
+            <div id="upload-status-factor" class="upload-status"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-content" id="tab-strategies">
+        <div style="display:grid;grid-template-columns:7fr 3fr;gap:10px;height:100%;">
+          <div style="display:flex;flex-direction:column;min-width:0;min-height:0;">
+            <div class="filter-bar">
+              <button onclick="loadStrategies()">刷新</button>
+              <button onclick="reloadStrategies()">强制重载策略目录</button>
+              <button onclick="loadPyStrategies()">刷新纯 Python 策略</button>
+              <button onclick="reloadPyStrategies()">重载纯 Python 目录</button>
+              <button class="btn-accent" onclick="openStrategyBacktestModal()">自定义回测</button>
+            </div>
+            <div style="overflow:auto;flex:1;min-height:0;">
+              <h4 style="margin:8px 0;color:var(--text-2);font-weight:500;">双文件制策略（MD + Python）</h4>
+              <table>
+                <thead><tr><th>ID</th><th>名称</th><th>版本</th><th>状态</th><th>标的</th><th class="text-right">最大杠杆</th><th>最近执行</th><th class="text-right">最近订单</th><th>最近错误</th></tr></thead>
+                <tbody id="strategies-body"><tr><td colspan="9" class="empty">暂无策略</td></tr></tbody>
+              </table>
+              <h4 style="margin:16px 0 8px;color:var(--text-2);font-weight:500;">纯 Python 策略（单文件制）</h4>
+              <table>
+                <thead><tr><th>ID</th><th>名称</th><th>版本</th><th>状态</th><th>标的</th><th class="text-right">最大杠杆</th><th>最近执行</th><th class="text-right">最近订单</th><th>最近错误</th></tr></thead>
+                <tbody id="py-strategies-body"><tr><td colspan="9" class="empty">暂无纯 Python 策略</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="upload-pane">
+            <div class="upload-head">
+              <strong>上传策略文件</strong>
+              <span class="hint">.md（双文件制）/ .py（单文件制） · <a href="about.html?v=3#upload-spec" target="_blank" style="color:var(--accent);">规范文档</a></span>
+            </div>
+            <div class="dropzone" id="dropzone-strategy"
+                 ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event,'strategy')">
+              <input type="file" id="file-input-strategy" accept=".md,.py" hidden onchange="onFilePick(event,'strategy')">
+              <div class="dz-inner">
+                <div class="dz-icon">+</div>
+                <div class="dz-text">拖入 .md 或 .py 文件<br>或<span class="dz-link" onclick="document.getElementById('file-input-strategy').click()">点击选取</span></div>
+                <div class="dz-hint">.md: &lt;STRATEGY-ID&gt;_&lt;name&gt;.md<br>.py: &lt;name&gt;.py</div>
+              </div>
+            </div>
+            <div class="upload-spec">
+              <div class="spec-title">文件要求</div>
+              <div class="spec-sub">.md（strategies/TEMPLATE.md）</div>
+              <ul>
+                <li>frontmatter：strategy_id / name / version / status / symbols / params / max_leverage / implementation / entry</li>
+                <li>正文 7 章节，含至少 1 个 <code>$$...$$</code> 公式块</li>
+              </ul>
+              <div class="spec-sub">.py（py_strategies/INTERFACE.md）</div>
+              <ul>
+                <li>STRATEGY_META（dict）+ STRATEGY_DESCRIPTION（Markdown 含 <code>$$...$$</code>）+ generate(ctx)</li>
+                <li>仅允许 numpy/pandas/math/statistics，禁止 os/sys/requests 等</li>
+              </ul>
+            </div>
+            <div id="upload-status-strategy" class="upload-status"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    </div>
+  </div>
+
+  <!-- Strategy Factory: full-screen top-level app -->
+  <div id="factory-app" class="factory-app">
+    <div class="factory-toolbar">
+      <div class="factory-title">策略工厂</div>
+      <div class="factory-actions">
+        <button onclick="generateStrategy()" class="btn-submit">生成策略</button>
+        <button onclick="validateStrategyCode()">仅校验</button>
+        <button onclick="saveStrategyCode()">保存并注册</button>
+      </div>
+    </div>
+    <div class="factory-layout" id="factory-layout">
+      <!-- Pane 1: Config -->
+      <div class="factory-pane" id="factory-pane-config">
+        <h4>大模型配置</h4>
+        <div class="field"><label>Provider</label>
+          <select id="ai-provider">
+            <option value="openai">OpenAI 兼容</option>
+            <option value="anthropic">Anthropic</option>
+          </select>
+        </div>
+        <div class="field"><label>API Key（可选）</label><input type="password" id="ai-api-key" placeholder="留空读取 config.yaml 或环境变量"></div>
+        <div class="field"><label>Base URL（可选）</label><input type="text" id="ai-base-url" placeholder="如 http://localhost:11434/v1"></div>
+        <div class="field"><label>Model</label><input type="text" id="ai-model" placeholder="gpt-4o-mini / claude-3-5-sonnet"></div>
+        <div class="field"><label>Temperature</label><input type="number" id="ai-temperature" value="0.2" step="0.1" min="0" max="2"></div>
+        <hr style="border-color:var(--border);margin:14px 0;">
+        <h4>策略需求</h4>
+        <div class="field"><label>strategy_id</label><input type="text" id="ai-strategy-id" placeholder="PYS-101"></div>
+        <div class="field"><label>name</label><input type="text" id="ai-name" placeholder="macd_cross"></div>
+        <div class="field"><label>symbols</label><input type="text" id="ai-symbols" placeholder="BTC/USDT,ETH/USDT 或 *"></div>
+        <div class="field"><label>max_leverage</label><input type="number" id="ai-max-leverage" value="5" min="1" max="20"></div>
+        <div class="field"><label>需求描述（中文）</label><textarea id="ai-request" rows="6" placeholder="例如：写一个基于 MACD 金叉死叉的动量策略，金叉做多、死叉做空，仓位为净值的 10%，杠杆 3 倍..."></textarea></div>
+        <div id="ai-status" class="hint"></div>
+      </div>
+      <!-- Splitter 1 -->
+      <div class="resize-handle" data-resize="config-code"></div>
+      <!-- Pane 2: Code -->
+      <div class="factory-pane" id="factory-pane-code" style="display:flex;flex-direction:column;padding:0;">
+        <div style="padding:12px 12px 0;"><h4>代码预览</h4></div>
+        <textarea id="ai-code" style="flex:1;font-family:var(--mono);font-size:12px;background:#0b0e11;color:#d4d4d4;border:none;padding:12px;white-space:pre;overflow:auto;" placeholder="点击「生成策略」后代码将出现在这里..."></textarea>
+      </div>
+      <!-- Splitter 2 -->
+      <div class="resize-handle" data-resize="code-desc"></div>
+      <!-- Pane 3: Description -->
+      <div class="factory-pane" id="factory-pane-desc" style="display:flex;flex-direction:column;padding:0;">
+        <div style="padding:12px 12px 0;"><h4>策略说明预览</h4></div>
+        <div id="ai-description" style="flex:1;overflow:auto;padding:12px;color:var(--text-2);font-size:13px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 回测 Modal -->
+  <div class="modal-overlay" id="bt-modal" style="display:none;">
+    <div class="modal-box">
+      <div class="modal-head">
+        <strong id="bt-modal-title">自定义回测</strong>
+        <span class="modal-close" onclick="closeBtModal()">×</span>
+      </div>
+      <div class="modal-body" id="bt-modal-body"></div>
+    </div>
+  </div>
+
+  <script>
+    // -------------------- State --------------------
+    const state = {
+      symbols: [],
+      selectedSymbol: 'BTC/USDT',
+      selectedFactors: new Set(),
+      checkedFactors: new Set(),   // 因子管理表格复选框勾选（供导出 Excel）
+      tz: 'local',
+      lastState: null,
+      klineRange: '7y',
+      klinePeriod: 'auto',
+      klineChart: null,
+      equityChart: null,
+      factorChart: null,
+      loadingHidden: false,
+      factors: [],          // 因子列表缓存（供回测弹框使用）
+      strategies: [],       // 双文件制策略列表
+      pyStrategies: [],    // 纯 Python 策略列表
+      maChecked: new Set(), // 当前勾选的预置均线 key
+    };
+
+    // -------------------- 预置均线（证券公司参考线） --------------------
+    // 窗口的自然日定义与 SMA 计算在后端 app/indicators.py，前端只保留展示属性（label/颜色）
+    const MA_PRESETS = [
+      { key: 'MA5',  label: 'MA5',  color: '#FF6B6B' },
+      { key: 'MA10', label: 'MA10', color: '#FFA94D' },
+      { key: 'MA20', label: 'MA20', color: '#FFD43B' },
+      { key: 'MA30', label: 'MA30', color: '#51CF66' },
+      { key: 'MA60', label: 'MA60', color: '#4DABF7' },
+      { key: 'MA83', label: 'MA83', color: '#B197FC' },
+      { key: 'MA_W', label: '周线', color: '#F783AC' },
+      { key: 'MA_M', label: '月线', color: '#22B8CF' },
+    ];
+    const MA_DEFAULT = ['MA20', 'MA60', 'MA83'];
+    const MA_STORAGE_KEY = 'ma_overlay_v1';
+
+    function getCheckedMA() {
+      try {
+        const raw = localStorage.getItem(MA_STORAGE_KEY);
+        // 仅在「从未存储过」时回退默认；用户主动全部关闭（空数组）应被尊重
+        if (!raw) return new Set(MA_DEFAULT);
+        const arr = JSON.parse(raw);
+        if (!Array.isArray(arr)) return new Set(MA_DEFAULT);
+        const set = new Set(arr);
+        // 仅保留仍存在的预设 key
+        const valid = MA_PRESETS.map(p => p.key);
+        for (const k of set) if (!valid.includes(k)) set.delete(k);
+        // 允许返回空 set：用户可全部关闭均线，不强制回退默认
+        return set;
+      } catch (_) {
+        return new Set(MA_DEFAULT);
+      }
+    }
+
+    function setCheckedMA(set) {
+      try { localStorage.setItem(MA_STORAGE_KEY, JSON.stringify(Array.from(set))); } catch (_) {}
+      state.maChecked = set;
+    }
+
+    // -------------------- Helpers --------------------
+    const $ = (sel) => document.querySelector(sel);
+    const fmt = (n, digits = 4) => {
+      if (n === null || n === undefined || Number.isNaN(n)) return '--';
+      const num = Number(n);
+      if (Math.abs(num) >= 1e9) return (num / 1e9).toFixed(2) + 'B';
+      if (Math.abs(num) >= 1e6) return (num / 1e6).toFixed(2) + 'M';
+      if (Math.abs(num) >= 1e3) return num.toLocaleString('en-US', { maximumFractionDigits: digits });
+      return num.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: digits });
+    };
+    const fmtPct = (n) => {
+      if (n === null || n === undefined || Number.isNaN(n)) return '--';
+      const s = (Number(n) * 100).toFixed(2) + '%';
+      return `<span class="${Number(n) >= 0 ? 'up' : 'down'}">${Number(n) >= 0 ? '+' : ''}${s}</span>`;
+    };
+    const fmtTs = (iso) => {
+      if (!iso) return '--';
+      const d = new Date(iso);
+      if (state.tz === 'UTC') return d.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+      if (state.tz === 'Asia/Shanghai') return d.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) + ' 北京';
+      return d.toLocaleString('zh-CN', { hour12: false });
+    };
+    const nowStr = () => {
+      const d = new Date();
+      if (state.tz === 'UTC') return d.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+      if (state.tz === 'Asia/Shanghai') return d.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) + ' 北京';
+      return d.toLocaleString('zh-CN', { hour12: false });
+    };
+
+    async function api(path, opts = {}) {
+      const r = await fetch('/api' + path, opts);
+      if (!r.ok) {
+        const text = await r.text().catch(() => r.statusText);
+        throw new Error(`${r.status}: ${text}`);
+      }
+      return r.json();
+    }
+
+    // -------------------- Polling --------------------
+    async function pollState() {
+      try {
+        const data = await api('/state');
+        state.lastState = data;
+        updateStatus(data);
+        renderAccount(data.account);
+        renderPositions(data.positions);
+        renderTickers(data.tickers);
+        renderStrategiesSummary(data.strategy_summary);
+        renderSignalsSummary(data.signal_status);
+        renderBackfill(data.backfill);
+        setHealth(true);
+        // 首次拿到 state 且已有 K线数据后，关闭 loading modal
+        if (!state.loadingHidden) {
+          hideLoadingModal();
+        }
+      } catch (e) {
+        setHealth(false);
+        console.error('poll state failed', e);
+      }
+    }
+
+    function hideLoadingModal() {
+      const modal = $('#loading-modal');
+      if (modal) modal.classList.add('hidden');
+      state.loadingHidden = true;
+    }
+
+    function renderBackfill(bf) {
+      if (!bf) return;
+      const dot = $('#backfill-status-dot');
+      const text = $('#backfill-status-text');
+      if (!dot || !text) return;
+      if (bf.running) {
+        text.textContent = '历史数据回填中…';
+        dot.className = 'dot warn';
+      } else if (bf.error) {
+        text.textContent = '回填失败';
+        dot.className = 'dot err';
+      } else {
+        text.textContent = '回填完成/空闲';
+        dot.className = 'dot ok';
+      }
+    }
+
+    async function refreshAll() {
+      await pollState();
+      await loadTickers();
+      await loadKlines();
+      await loadAccount();
+      await loadFactors();
+      await loadRules();
+      await loadStrategies();
+      const activeTabs = [...document.querySelectorAll('.tab.active')].map(t => t.dataset.tab);
+      if (activeTabs.includes('orders')) { await loadOrders(); await loadTrades(); }
+      if (activeTabs.includes('equity')) await loadEquity();
+      if (activeTabs.includes('factors')) await loadFactorSeries();
+    }
+
+    function setHealth(ok) {
+      const el = $('#health');
+      el.innerHTML = `<span class="dot ${ok ? 'ok' : 'err'}"></span>API ${ok ? '正常' : '异常'}`;
+    }
+
+    function updateStatus(data) {
+      const s = data.scheduler || {};
+      $('#sched-status').textContent = `调度器: ${s.running ? '运行中' : '暂停'}`;
+      $('#tick-count').textContent = `Ticks: ${s.tick_count || 0}`;
+      $('#next-tick').textContent = `下次: ${s.next_tick_at ? fmtTs(s.next_tick_at) : '--'}`;
+      $('#clock').textContent = nowStr();
+    }
+
+    // -------------------- Market --------------------
+    async function loadTickers() {
+      try {
+        const data = await api('/market/tickers');
+        renderTickers(data.symbols || {});
+        // build symbol selector if empty
+        const sel = $('#symbol-select');
+        if (!sel.options.length) {
+          const syms = Object.keys(data.symbols || {});
+          syms.forEach(sym => { const o = document.createElement('option'); o.value = sym; o.textContent = sym; sel.appendChild(o); });
+          state.symbols = syms;
+          if (syms.includes(state.selectedSymbol)) sel.value = state.selectedSymbol;
+          else if (syms.length) { state.selectedSymbol = syms[0]; sel.value = syms[0]; }
+        }
+      } catch (e) { console.error(e); }
+    }
+
+    function renderTickers(tickers) {
+      const t = tickers[state.selectedSymbol];
+      if (!t) return;
+      $('#stat-price').textContent = fmt(t.last_price, 2);
+      $('#stat-price').className = 'value ' + (t.change_24h_pct >= 0 ? 'up' : 'down');
+      $('#stat-change').innerHTML = t.change_24h_pct !== null && t.change_24h_pct !== undefined ? fmtPct(t.change_24h_pct / 100) : '--';
+      $('#stat-funding').textContent = t.funding_rate !== null && t.funding_rate !== undefined ? fmt(t.funding_rate * 100, 4) + '%' : '--';
+      $('#stat-oi').textContent = t.open_interest !== null && t.open_interest !== undefined ? fmt(t.open_interest, 0) : '--';
+    }
+
+    $('#symbol-select').addEventListener('change', (e) => {
+      state.selectedSymbol = e.target.value;
+      $('#order-symbol').value = state.selectedSymbol;
+      loadKlines();
+      loadTickers();
+      if ([...document.querySelectorAll('.tab.active')].some(t => t.dataset.tab === 'factors')) loadFactorSeries();
+    });
+
+    function getKlineWindow() {
+      const now = new Date();
+      const end = now.toISOString();
+      let start;
+      switch (state.klineRange) {
+        case '1d': start = new Date(now - 86400000).toISOString(); break;
+        case '1w': start = new Date(now - 86400000 * 7).toISOString(); break;
+        case '1M': start = new Date(now - 86400000 * 30).toISOString(); break;
+        case '1y': start = new Date(now - 86400000 * 365).toISOString(); break;
+        case '7y': start = new Date(now - 86400000 * 365 * 7).toISOString(); break;
+        default: start = new Date(now - 86400000 * 365 * 7).toISOString();
+      }
+      return { start, end };
+    }
+
+    function onKlineRangeChange() {
+      state.klineRange = $('#kline-range').value;
+      state.klinePeriod = $('#kline-period').value;
+      loadKlines();
+    }
+
+    async function loadKlines() {
+      try {
+        const { start, end } = getKlineWindow();
+        const periodParam = state.klinePeriod === 'auto' ? '' : `&period=${encodeURIComponent(state.klinePeriod)}`;
+        const url = `/market/klines?symbol=${encodeURIComponent(state.selectedSymbol)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&limit=5000&ma=all${periodParam}`;
+        const data = await api(url);
+        if (data.error) { console.error(data.error); return; }
+        const rows = data.data || [];
+        const period = data.period || state.klinePeriod;
+        const ma = data.ma || {};
+        state._lastKlineRows = { rows, period, ma };
+        renderKline(rows, period, false, ma);
+      } catch (e) { console.error(e); }
+    }
+
+    function renderKline(rows, period, preserveZoom, ma) {
+      if (!state.klineChart) state.klineChart = echarts.init($('#chart-kline'));
+      if (!rows.length) {
+        state.klineChart.setOption({ title: { text: '暂无 K线数据', left: 'center', top: 'center', textStyle: { color: '#848e9c' } }, xAxis: { show: false }, yAxis: { show: false }, series: [] }, true);
+        return;
+      }
+      const isLongRange = state.klineRange === '7y' || state.klineRange === '1y';
+      const fmtTsLabel = (ts) => {
+        if (isLongRange) return ts.slice(0, 10);
+        if (state.klineRange === '1M') return ts.slice(5, 10) + ' ' + ts.slice(11, 16);
+        return ts.slice(11, 16);
+      };
+      const category = rows.map(r => fmtTsLabel(r.ts));
+      const values = rows.map(r => [r.open, r.close, r.low, r.high]);
+      const volumes = rows.map(r => [fmtTsLabel(r.ts), r.volume, r.close >= r.open ? 1 : -1]);
+
+      // 多均线：后端随 K线接口返回（app/indicators.py 计算），前端只渲染勾选的数据线
+      const maData = ma || {};
+      const checked = state.maChecked || new Set();
+      const maSeries = [];
+      const maLines = MA_PRESETS.map(p => ({ preset: p, data: maData[p.key] || [] }));
+      for (const { preset, data } of maLines) {
+        if (!checked.has(preset.key)) continue;
+        maSeries.push({
+          name: preset.label,
+          type: 'line',
+          data,
+          smooth: true,
+          symbol: 'none',
+          lineStyle: { color: preset.color, width: 1.0 },
+          z: 5,
+        });
+      }
+      const legendData = MA_PRESETS.map(p => ({ name: p.label, icon: 'rect' }));
+
+      state.klineChart.setOption({
+        backgroundColor: 'transparent',
+        animation: false,
+        grid: [{ left: '72', right: '48', top: '16', bottom: '64' }, { left: '72', right: '48', bottom: '24', height: '40' }],
+        tooltip: { trigger: 'axis', axisPointer: { type: 'cross' }, backgroundColor: 'rgba(21,26,32,0.95)', borderColor: '#2b3139', textStyle: { color: '#eaecef' }, formatter: (params) => {
+          const candle = params.find(p => p.seriesName === 'K线');
+          if (!candle) return '';
+          const r = rows[candle.dataIndex];
+          const idx = candle.dataIndex;
+          let maHtml = '';
+          for (const { preset, data } of maLines) {
+            if (!checked.has(preset.key)) continue;
+            const v = data[idx];
+            const txt = v != null ? fmt(v, 2) : '—';
+            maHtml += `<div style="color:${preset.color}">${preset.label}: ${txt}</div>`;
+          }
+          return `<div style="font-size:12px">${r.ts.replace('T',' ').slice(0,19)}</div>` +
+            `<div>开: ${fmt(candle.data[0], 2)} 高: ${fmt(candle.data[3], 2)}</div>` +
+            `<div>低: ${fmt(candle.data[2], 2)} 收: ${fmt(candle.data[1], 2)}</div>` +
+            `${maHtml}` +
+            `<div>量: ${fmt(r.volume, 4)}</div>`;
+        }},
+        legend: {
+          data: legendData,
+          top: 4,
+          right: 8,
+          textStyle: { color: '#848e9c', fontSize: 11 },
+          selectedMode: 'multiple',
+          itemWidth: 10, itemHeight: 6,
+        },
+        xAxis: [{ type: 'category', data: category, scale: true, boundaryGap: false, axisLine: { lineStyle: { color: '#2b3139' } }, axisLabel: { color: '#848e9c' } }, { type: 'category', gridIndex: 1, data: category, axisLine: { lineStyle: { color: '#2b3139' } }, axisLabel: { show: false } }],
+        yAxis: [{ scale: true, splitLine: { lineStyle: { color: '#1e2329' } }, axisLabel: { color: '#848e9c' } }, { scale: true, gridIndex: 1, splitNumber: 2, axisLabel: { show: false }, axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false } }],
+        dataZoom: preserveZoom
+          ? (() => { try { return state.klineChart.getOption().dataZoom || []; } catch (_) { return []; } })()
+          : [{ type: 'inside', xAxisIndex: [0, 1], start: 0, end: 100 }, { show: true, xAxisIndex: [0, 1], type: 'slider', bottom: 0, start: 0, end: 100, borderColor: '#2b3139', fillerColor: 'rgba(240,185,11,0.15)', handleStyle: { color: '#f0b90b' }, textStyle: { color: '#848e9c' } }],
+        series: [
+          { name: 'K线', type: 'candlestick', data: values, itemStyle: { color: '#0ecb81', color0: '#f6465d', borderColor: '#0ecb81', borderColor0: '#f6465d' } },
+          ...maSeries,
+          { name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: volumes, itemStyle: { color: (p) => p.value[2] >= 0 ? 'rgba(14,203,129,0.5)' : 'rgba(246,70,93,0.5)' } }
+        ]
+      }, true);
+    }
+
+    // -------------------- 均线复选框导航栏 --------------------
+    function renderMAToolbar() {
+      const bar = $('#ma-toolbar');
+      if (!bar) return;
+      // 保留「均线叠加」标题，清空其余
+      while (bar.children.length > 1) bar.removeChild(bar.lastChild);
+      state.maChecked = getCheckedMA();
+      const checked = state.maChecked;
+      const total = MA_PRESETS.length;
+      const isAll = checked.size === total;
+      // 「全部」chip
+      const allChip = document.createElement('label');
+      allChip.className = 'ma-chip all' + (isAll ? ' checked' : '');
+      allChip.style.setProperty('--chip-color', '#f0b90b');
+      allChip.innerHTML = `<input type="checkbox" id="ma-all" ${isAll ? 'checked' : ''}>全部`;
+      allChip.querySelector('input').addEventListener('change', (e) => {
+        const want = e.target.checked;
+        const next = want ? new Set(MA_PRESETS.map(p => p.key)) : new Set();
+        setCheckedMA(next);
+        renderMAToolbar();
+        reloadKlineRender();
+      });
+      bar.appendChild(allChip);
+      // 单条 chip
+      for (const p of MA_PRESETS) {
+        const on = checked.has(p.key);
+        const chip = document.createElement('label');
+        chip.className = 'ma-chip' + (on ? ' checked' : '');
+        chip.style.setProperty('--chip-color', p.color);
+        chip.innerHTML = `<input type="checkbox" data-key="${p.key}" ${on ? 'checked' : ''}>${p.label}`;
+        chip.querySelector('input').addEventListener('change', (e) => {
+          const k = e.target.getAttribute('data-key');
+          const cur = new Set(state.maChecked);
+          if (e.target.checked) cur.add(k); else cur.delete(k);
+          setCheckedMA(cur);
+          renderMAToolbar();
+          reloadKlineRender();
+        });
+        bar.appendChild(chip);
+      }
+    }
+
+    // 仅重渲染 K 线（用当前已加载的 rows，避免重拉数据），并保留当前 dataZoom 缩放比例
+    function reloadKlineRender() {
+      const last = state._lastKlineRows;
+      if (!last) return;
+      renderKline(last.rows, last.period, true, last.ma || {});
+    }
+
+    // -------------------- Account --------------------
+    async function loadAccount() {
+      try {
+        const data = await api('/trading/account');
+        renderAccount(data);
+      } catch (e) { console.error(e); }
+    }
+
+    function renderAccount(a) {
+      if (!a) return;
+      $('#acc-equity').textContent = fmt(a.equity, 2);
+      $('#acc-wallet').textContent = fmt(a.wallet_balance, 2);
+      $('#acc-margin').textContent = fmt(a.margin_used, 2);
+      $('#acc-upnl').innerHTML = fmtPct(a.unrealized_pnl / (a.equity || 1));
+      $('#acc-winrate').textContent = a.win_rate !== null && a.win_rate !== undefined ? (a.win_rate * 100).toFixed(1) + '%' : '--';
+      $('#acc-dd').textContent = a.max_drawdown_pct !== null && a.max_drawdown_pct !== undefined ? (a.max_drawdown_pct * 100).toFixed(2) + '%' : '--';
+      $('#acc-upnl').className = 'value mono ' + (a.unrealized_pnl >= 0 ? 'up' : 'down');
+    }
+
+    // -------------------- Positions --------------------
+    function renderPositions(rows) {
+      const tb = $('#positions-body');
+      if (!rows || !rows.length) { tb.innerHTML = '<tr><td colspan="9" class="empty">暂无持仓</td></tr>'; return; }
+      tb.innerHTML = rows.map(p => `
+        <tr>
+          <td>${p.symbol}</td>
+          <td>${p.category}</td>
+          <td>${p.side}</td>
+          <td class="text-right mono">${fmt(p.qty, 6)}</td>
+          <td class="text-right mono">${fmt(p.entry_price, 2)}</td>
+          <td class="text-right mono">${fmt(p.leverage, 0)}x</td>
+          <td class="text-right mono">${fmt(p.margin, 2)}</td>
+          <td class="text-right mono ${p.unrealized_pnl >= 0 ? 'up' : 'down'}">${fmt(p.unrealized_pnl, 2)}</td>
+          <td class="text-right mono">${p.liq_price !== null && p.liq_price !== undefined ? fmt(p.liq_price, 2) : '--'}</td>
+        </tr>`).join('');
+    }
+
+    // -------------------- Orders / Trades --------------------
+    async function loadOrders() {
+      try {
+        const status = $('#order-filter').value;
+        const data = await api('/trading/orders?limit=100' + (status ? '&status=' + status : ''));
+        const tb = $('#orders-body');
+        if (!data.data || !data.data.length) { tb.innerHTML = '<tr><td colspan="11" class="empty">暂无订单</td></tr>'; return; }
+        tb.innerHTML = data.data.map(o => `
+          <tr>
+            <td class="mono" title="${o.order_id}">${o.order_id.slice(0, 12)}…</td>
+            <td>${o.symbol}</td>
+            <td>${o.side}</td>
+            <td>${o.order_type}</td>
+            <td class="text-right mono">${fmt(o.qty, 6)}</td>
+            <td class="text-right mono">${o.price !== null && o.price !== undefined ? fmt(o.price, 2) : '--'}</td>
+            <td class="text-right mono">${o.leverage !== null && o.leverage !== undefined ? fmt(o.leverage, 0) + 'x' : '--'}</td>
+            <td><span class="badge ${o.status}">${o.status}</span></td>
+            <td>${o.source}</td>
+            <td>${fmtTs(o.created_ts)}</td>
+            <td class="error">${o.reject_reason || ''}</td>
+          </tr>`).join('');
+      } catch (e) { console.error(e); }
+    }
+
+    async function loadTrades() {
+      try {
+        const data = await api('/trading/trades?limit=100');
+        const tb = $('#trades-body');
+        if (!data.data || !data.data.length) { tb.innerHTML = '<tr><td colspan="9" class="empty">暂无成交</td></tr>'; return; }
+        tb.innerHTML = data.data.map(t => `
+          <tr>
+            <td class="mono">${t.trade_id.slice(0, 12)}…</td>
+            <td class="mono">${t.order_id.slice(0, 12)}…</td>
+            <td>${t.symbol}</td>
+            <td>${t.side}</td>
+            <td class="text-right mono">${fmt(t.qty, 6)}</td>
+            <td class="text-right mono">${fmt(t.price, 2)}</td>
+            <td class="text-right mono">${fmt(t.fee, 4)}</td>
+            <td>${fmtTs(t.ts)}</td>
+            <td>${t.liquidated ? '是' : '否'}</td>
+          </tr>`).join('');
+      } catch (e) { console.error(e); }
+    }
+
+    async function placeOrder(e) {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const body = {
+        symbol: fd.get('symbol'),
+        side: fd.get('side'),
+        order_type: fd.get('order_type'),
+        qty: parseFloat(fd.get('qty')),
+        price: fd.get('price') ? parseFloat(fd.get('price')) : null,
+        leverage: fd.get('leverage') ? parseFloat(fd.get('leverage')) : null,
+        market_type: fd.get('market_type') || null,
+      };
+      try {
+        const r = await api('/trading/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        $('#order-result').innerHTML = r.ok ? `<span class="up">订单已提交: ${r.order_id} (${r.status})</span>` : `<span class="down">被拒: ${r.reason}</span>`;
+        e.target.reset();
+        $('#order-symbol').value = state.selectedSymbol;
+        loadOrders();
+        loadPositionsFromState();
+        loadAccount();
+      } catch (err) { $('#order-result').innerHTML = `<span class="down">错误: ${err.message}</span>`; }
+      return false;
+    }
+
+    function loadPositionsFromState() { pollState(); }
+
+    // -------------------- Equity --------------------
+    async function loadEquity() {
+      try {
+        const data = await api('/trading/equity?limit=2000');
+        renderEquity(data.data || []);
+      } catch (e) { console.error(e); }
+    }
+
+    function renderEquity(rows) {
+      if (!state.equityChart) state.equityChart = echarts.init($('#chart-equity'));
+      if (!rows.length) { state.equityChart.setOption({ xAxis: { show: false }, yAxis: { show: false }, series: [] }, true); return; }
+      const x = rows.map(r => r.ts.slice(11, 16));
+      state.equityChart.setOption({
+        backgroundColor: 'transparent',
+        animation: false,
+        grid: { left: 50, right: 30, top: 20, bottom: 30 },
+        tooltip: { trigger: 'axis', backgroundColor: 'rgba(21,26,32,0.95)', borderColor: '#2b3139', textStyle: { color: '#eaecef' } },
+        xAxis: { type: 'category', data: x, axisLine: { lineStyle: { color: '#2b3139' } }, axisLabel: { color: '#848e9c' } },
+        yAxis: { scale: true, splitLine: { lineStyle: { color: '#1e2329' } }, axisLabel: { color: '#848e9c' } },
+        series: [{ name: '净值', type: 'line', data: rows.map(r => r.equity), smooth: true, symbol: 'none', lineStyle: { color: '#f0b90b', width: 1.5 }, areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(240,185,11,0.25)' }, { offset: 1, color: 'rgba(240,185,11,0)' }] } } }]
+      }, true);
+    }
+
+    // -------------------- Factors --------------------
+    let allFactors = [];
+    async function loadFactors() {
+      try {
+        const data = await api('/registry/factors');
+        allFactors = data.factors || [];
+        state.factors = allFactors;   // 缓存供回测弹框使用
+        const cats = new Set(allFactors.map(f => f.category).filter(Boolean));
+        const sel = $('#factor-category');
+        const cur = sel.value;
+        sel.innerHTML = '<option value="">全部类别</option>' + Array.from(cats).map(c => `<option value="${c}">${c}</option>`).join('');
+        sel.value = cur;
+        renderFactors();
+        populateRuleFactorSelect();
+      } catch (e) { console.error(e); }
+    }
+
+    function getFilteredFactors() {
+      const q = ($('#factor-search').value || '').toLowerCase();
+      const cat = $('#factor-category').value;
+      return allFactors.filter(f => {
+        const match = !q || (f.factor_id || '').toLowerCase().includes(q) || (f.name || '').toLowerCase().includes(q) || (f.category || '').toLowerCase().includes(q);
+        return match && (!cat || f.category === cat);
+      });
+    }
+
+    function renderFactors() {
+      const rows = getFilteredFactors();
+      const tb = $('#factors-body');
+      if (!rows.length) { tb.innerHTML = '<tr><td colspan="6" class="empty">无匹配因子</td></tr>'; updateFactorCheckCount(rows); return; }
+      tb.innerHTML = rows.map(f => {
+        const latest = f.latest_values && f.latest_values[state.selectedSymbol];
+        const val = latest ? fmt(latest.value, 6) : '--';
+        const badgeClass = f.status === 'active' ? 'active' : (f.status === 'invalid' ? 'invalid' : (f.status === 'deprecated' ? 'deprecated' : 'draft'));
+        const errs = (f.validation_errors || []).map(e => `${e.rule_no}/${e.field}: ${e.message}`).join('; ');
+        const selected = state.selectedFactors.has(f.factor_id);
+        const checked = state.checkedFactors.has(f.factor_id);
+        return `<tr class="factor-row ${selected ? 'selected' : ''}" data-id="${f.factor_id}" onclick="selectFactor(event, '${f.factor_id}')">
+          <td onclick="event.stopPropagation()"><input type="checkbox" data-check-id="${f.factor_id}" ${checked ? 'checked' : ''} onchange="toggleFactorCheck('${f.factor_id}', this.checked)"></td>
+          <td class="mono">${f.factor_id || '--'}</td>
+          <td>${f.name || '--'}</td>
+          <td>${f.category || '--'}</td>
+          <td><span class="badge ${badgeClass}">${f.status}</span></td>
+          <td class="mono">${val}</td>
+        </tr>
+        ${errs ? `<tr><td colspan="6" class="error" style="padding-left:24px;">${errs}</td></tr>` : ''}`;
+      }).join('');
+      updateFactorCheckCount(rows);
+    }
+
+    // -------------------- 因子复选框（导出 Excel 用） --------------------
+    function toggleFactorCheck(id, on) {
+      if (on) state.checkedFactors.add(id); else state.checkedFactors.delete(id);
+      updateFactorCheckCount(getFilteredFactors());
+    }
+
+    function toggleCheckAllFactors(on) {
+      // 全选/全不选作用于「当前筛选结果」，避免误选不可见行
+      for (const f of getFilteredFactors()) {
+        if (on) state.checkedFactors.add(f.factor_id);
+        else state.checkedFactors.delete(f.factor_id);
+      }
+      renderFactors();
+    }
+
+    function updateFactorCheckCount(rows) {
+      const el = $('#factor-check-count');
+      if (el) el.textContent = state.checkedFactors.size ? `已勾选 ${state.checkedFactors.size} 个` : '未勾选时导出当前筛选结果';
+      // 表头全选框状态跟随当前筛选结果
+      const all = $('#factor-check-all');
+      if (all) {
+        const ids = (rows || []).map(f => f.factor_id);
+        const n = ids.filter(id => state.checkedFactors.has(id)).length;
+        all.checked = ids.length > 0 && n === ids.length;
+        all.indeterminate = n > 0 && n < ids.length;
+      }
+    }
+
+    async function exportFactorsExcel() {
+      // 有勾选的导出勾选项；否则导出当前筛选结果
+      let ids = Array.from(state.checkedFactors);
+      if (!ids.length) ids = getFilteredFactors().map(f => f.factor_id).filter(Boolean);
+      if (!ids.length) { alert('没有可导出的因子'); return; }
+      try {
+        const r = await fetch('/api/factors/export', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids }),
+        });
+        if (!r.ok) { alert('导出失败: ' + r.status); return; }
+        const blob = await r.blob();
+        const cd = r.headers.get('Content-Disposition') || '';
+        const m = cd.match(/filename="?([^";]+)"?/);
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = m ? m[1] : 'factors_export.xlsx';
+        a.click();
+        URL.revokeObjectURL(a.href);
+      } catch (e) { console.error(e); alert('导出失败: ' + e.message); }
+    }
+
+    function selectFactor(ev, id) {
+      const multi = ev && (ev.ctrlKey || ev.metaKey);
+      if (multi) {
+        if (state.selectedFactors.has(id)) state.selectedFactors.delete(id);
+        else state.selectedFactors.add(id);
+      } else {
+        state.selectedFactors.clear();
+        state.selectedFactors.add(id);
+      }
+      renderFactors();
+      const ids = Array.from(state.selectedFactors);
+      $('#factor-detail').innerHTML = ids.length ? `
+        <strong>已选 ${ids.length} 个因子</strong><br>
+        ${ids.map(fid => {
+          const f = allFactors.find(x => x.factor_id === fid);
+          return f ? `${f.factor_id} ${f.name} <span class="badge ${f.status === 'active' ? 'active' : 'draft'}">${f.status}</span>` : fid;
+        }).join('<br>')}
+      ` : '';
+      loadFactorSeries();
+    }
+
+    async function loadFactorSeries() {
+      if (!state.selectedFactors.size) return;
+      const all = [];
+      for (const fid of state.selectedFactors) {
+        try {
+          const data = await api(`/factors/${encodeURIComponent(fid)}/series?symbol=${encodeURIComponent(state.selectedSymbol)}&limit=500`);
+          all.push({ factor_id: fid, rows: data.data || [] });
+        } catch (e) { console.error(e); }
+      }
+      renderFactorSeries(all);
+    }
+
+    const FACTOR_COLORS = ['#f0b90b', '#0ecb81', '#f6465d', '#6a9bcc', '#d97757', '#788c5d', '#b0aea5', '#e8e6dc'];
+
+    function renderFactorSeries(seriesList) {
+      if (!state.factorChart) state.factorChart = echarts.init($('#chart-factor'));
+      if (!seriesList.length) { state.factorChart.setOption({ xAxis: { show: false }, yAxis: { show: false }, series: [] }, true); return; }
+      const x = seriesList[0].rows.map(r => r.ts.slice(11, 16));
+      const series = seriesList.map((s, idx) => ({
+        name: s.factor_id,
+        type: 'line',
+        data: s.rows.map(r => r.value),
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { color: FACTOR_COLORS[idx % FACTOR_COLORS.length], width: 1.5 }
+      }));
+      state.factorChart.setOption({
+        backgroundColor: 'transparent',
+        animation: false,
+        legend: { data: seriesList.map(s => s.factor_id), textStyle: { color: '#848e9c' }, top: 0 },
+        grid: { left: 45, right: 20, top: 30, bottom: 25 },
+        tooltip: { trigger: 'axis', backgroundColor: 'rgba(21,26,32,0.95)', borderColor: '#2b3139', textStyle: { color: '#eaecef' } },
+        xAxis: { type: 'category', data: x, axisLine: { lineStyle: { color: '#2b3139' } }, axisLabel: { color: '#848e9c' } },
+        yAxis: { scale: true, splitLine: { lineStyle: { color: '#1e2329' } }, axisLabel: { color: '#848e9c' } },
+        series
+      }, true);
+    }
+
+    function populateRuleFactorSelect() {
+      const sel = $('#rule-factor');
+      sel.innerHTML = allFactors.filter(f => f.registered && f.status === 'active').map(f => `<option value="${f.factor_id}">${f.factor_id} ${f.name}</option>`).join('');
+    }
+
+    // -------------------- Signals --------------------
+    async function loadRules() {
+      try {
+        const data = await api('/signals/rules');
+        const tb = $('#rules-body');
+        if (!data.rules || !data.rules.length) { tb.innerHTML = '<tr><td colspan="10" class="empty">暂无规则</td></tr>'; return; }
+        tb.innerHTML = data.rules.map(r => `
+          <tr>
+            <td class="mono">${r.rule_id}</td>
+            <td>${r.factor_id}</td>
+            <td>${r.symbol}</td>
+            <td>${r.direction}</td>
+            <td class="text-right mono">${r.entry_threshold}</td>
+            <td class="text-right mono">${r.exit_threshold}</td>
+            <td class="text-right mono">${r.weight}</td>
+            <td class="text-right mono">${r.zscore_window}</td>
+            <td><span class="badge ${r.enabled ? 'active' : 'draft'}">${r.enabled ? '启用' : '停用'}</span></td>
+            <td>
+              <button onclick="toggleRule('${r.rule_id}', ${!r.enabled})" style="padding:2px 6px;font-size:11px;">${r.enabled ? '停用' : '启用'}</button>
+              <button onclick="deleteRule('${r.rule_id}')" style="padding:2px 6px;font-size:11px;color:var(--down);">删除</button>
+            </td>
+          </tr>`).join('');
+      } catch (e) { console.error(e); }
+    }
+
+    async function createRule(e) {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const body = {
+        factor_id: fd.get('factor_id'),
+        symbol: fd.get('symbol'),
+        direction: fd.get('direction'),
+        entry_threshold: parseFloat(fd.get('entry_threshold')),
+        exit_threshold: parseFloat(fd.get('exit_threshold')),
+        weight: parseFloat(fd.get('weight')),
+        zscore_window: parseInt(fd.get('zscore_window'), 10),
+        enabled: fd.get('enabled') === 'true',
+      };
+      try {
+        const r = await api('/signals/rules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        $('#rule-result').innerHTML = `<span class="up">规则已创建: ${r.rule.rule_id}</span>`;
+        e.target.reset();
+        loadRules();
+      } catch (err) { $('#rule-result').innerHTML = `<span class="down">错误: ${err.message}</span>`; }
+      return false;
+    }
+
+    async function toggleRule(id, enabled) {
+      try {
+        const cur = await api(`/signals/rules/${id}`);
+        const rule = cur.rule;
+        await api(`/signals/rules/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...rule, enabled }) });
+        loadRules();
+      } catch (e) { alert(e.message); }
+    }
+
+    async function deleteRule(id) {
+      if (!confirm('确认删除规则 ' + id + '?')) return;
+      try { await api('/signals/rules/' + id, { method: 'DELETE' }); loadRules(); } catch (e) { alert(e.message); }
+    }
+
+    function renderSignalsSummary(s) {
+      // signal summary is shown in status; could also render summary card if needed
+    }
+
+    // -------------------- Strategies --------------------
+    async function loadStrategies() {
+      try {
+        const data = await api('/registry/strategies');
+        state.strategies = data.strategies || [];   // 缓存供回测弹框使用
+        const tb = $('#strategies-body');
+        if (!data.strategies || !data.strategies.length) { tb.innerHTML = '<tr><td colspan="9" class="empty">暂无策略</td></tr>'; return; }
+        tb.innerHTML = data.strategies.map(s => {
+          const badgeClass = s.status === 'active' ? 'active' : (s.status === 'invalid' ? 'invalid' : (s.status === 'deprecated' ? 'deprecated' : 'draft'));
+          return `<tr>
+            <td class="mono">${s.strategy_id || '--'}</td>
+            <td>${s.name}</td>
+            <td>${s.version || '--'}</td>
+            <td><span class="badge ${badgeClass}">${s.status}</span></td>
+            <td>${(s.symbols || []).join(', ')}</td>
+            <td class="text-right mono">${s.max_leverage !== null && s.max_leverage !== undefined ? s.max_leverage + 'x' : '--'}</td>
+            <td>${fmtTs(s.last_run)}</td>
+            <td class="text-right mono">${s.last_orders}</td>
+            <td class="error">${s.last_error || ''}</td>
+          </tr>`;
+        }).join('');
+      } catch (e) { console.error(e); }
+    }
+
+    async function reloadStrategies() {
+      try { await api('/strategies/reload', { method: 'POST' }); loadStrategies(); } catch (e) { alert(e.message); }
+    }
+
+    function renderStrategiesSummary(s) {
+      // optional summary rendering
+    }
+
+    // -------------------- Pure Python Strategies --------------------
+    async function loadPyStrategies() {
+      try {
+        const data = await api('/pystrategies');
+        state.pyStrategies = data.strategies || [];   // 缓存供回测弹框使用
+        const tb = $('#py-strategies-body');
+        if (!data.strategies || !data.strategies.length) { tb.innerHTML = '<tr><td colspan="9" class="empty">暂无纯 Python 策略</td></tr>'; return; }
+        tb.innerHTML = data.strategies.map(s => {
+          const badgeClass = s.status === 'active' ? 'active' : (s.status === 'invalid' ? 'invalid' : (s.status === 'deprecated' ? 'deprecated' : 'draft'));
+          return `<tr>
+            <td class="mono">${s.strategy_id || '--'}</td>
+            <td>${s.name}</td>
+            <td>${s.version || '--'}</td>
+            <td><span class="badge ${badgeClass}">${s.status}</span></td>
+            <td>${(s.symbols || []).join(', ')}</td>
+            <td class="text-right mono">${s.max_leverage !== null && s.max_leverage !== undefined ? s.max_leverage + 'x' : '--'}</td>
+            <td>${fmtTs(s.last_run)}</td>
+            <td class="text-right mono">${s.last_orders}</td>
+            <td class="error">${s.last_error || ''}</td>
+          </tr>`;
+        }).join('');
+      } catch (e) { console.error(e); }
+    }
+
+    async function reloadPyStrategies() {
+      try { await api('/pystrategies/reload', { method: 'POST' }); loadPyStrategies(); } catch (e) { alert(e.message); }
+    }
+
+    // -------------------- AI Strategy Factory --------------------
+    function _aiPayload() {
+      const symbolsVal = $('#ai-symbols').value.trim();
+      return {
+        request: $('#ai-request').value.trim(),
+        strategy_id: $('#ai-strategy-id').value.trim() || undefined,
+        name: $('#ai-name').value.trim() || undefined,
+        symbols: symbolsVal ? symbolsVal.split(',').map(x => x.trim()) : undefined,
+        max_leverage: $('#ai-max-leverage').value ? parseInt($('#ai-max-leverage').value, 10) : undefined,
+        provider: $('#ai-provider').value || undefined,
+        api_key: $('#ai-api-key').value.trim() || undefined,
+        base_url: $('#ai-base-url').value.trim() || undefined,
+        model: $('#ai-model').value.trim() || undefined,
+        temperature: $('#ai-temperature').value !== '' ? parseFloat($('#ai-temperature').value) : undefined,
+        max_tokens: 8192,
+        timeout: 180,
+      };
+    }
+
+    async function generateStrategy() {
+      const status = $('#ai-status');
+      status.textContent = '生成中...';
+      try {
+        const data = await api('/ai/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(_aiPayload()),
+        });
+        $('#ai-code').value = data.code || '';
+        status.textContent = data.ok ? '生成完成，协议校验通过' : `生成完成，但校验未通过：${(data.validation_errors || []).map(e => `规则${e.rule_no}[${e.field}]: ${e.message}`).join('；')}`;
+        status.style.color = data.ok ? 'var(--up)' : 'var(--down)';
+        _previewDescription();
+      } catch (e) { status.textContent = '生成失败：' + e.message; status.style.color = 'var(--down)'; }
+    }
+
+    async function validateStrategyCode() {
+      const code = $('#ai-code').value.trim();
+      if (!code) { alert('代码为空'); return; }
+      const status = $('#ai-status');
+      status.textContent = '校验中...';
+      try {
+        const data = await api('/ai/validate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code }),
+        });
+        status.textContent = data.ok ? '校验通过' : `校验未通过：${(data.validation_errors || []).map(e => `规则${e.rule_no}[${e.field}]: ${e.message}`).join('；')}`;
+        status.style.color = data.ok ? 'var(--up)' : 'var(--down)';
+      } catch (e) { status.textContent = '校验失败：' + e.message; status.style.color = 'var(--down)'; }
+    }
+
+    // -------------------- AI 配置本地缓存 --------------------
+    const AI_CONFIG_KEY = 'cpl_ai_factory_config';
+    const AI_CONFIG_FIELDS = ['ai-provider', 'ai-api-key', 'ai-base-url', 'ai-model', 'ai-temperature'];
+
+    function _saveAiConfig() {
+      const cfg = {};
+      AI_CONFIG_FIELDS.forEach(id => { cfg[id] = document.getElementById(id).value; });
+      try { localStorage.setItem(AI_CONFIG_KEY, JSON.stringify(cfg)); } catch (e) { /* ignore */ }
+    }
+
+    function _loadAiConfig() {
+      let cfg = null;
+      try { cfg = JSON.parse(localStorage.getItem(AI_CONFIG_KEY) || 'null'); } catch (e) { /* ignore */ }
+      if (!cfg) return;
+      AI_CONFIG_FIELDS.forEach(id => {
+        if (cfg[id] !== undefined && cfg[id] !== null && cfg[id] !== '') {
+          document.getElementById(id).value = cfg[id];
+        }
+      });
+    }
+
+    _loadAiConfig();
+    AI_CONFIG_FIELDS.forEach(id => {
+      document.getElementById(id).addEventListener('input', _saveAiConfig);
+      document.getElementById(id).addEventListener('change', _saveAiConfig);
+    });
+
+    async function saveStrategyCode() {
+      const code = $('#ai-code').value.trim();
+      if (!code) { alert('代码为空'); return; }
+      const filename = $('#ai-name').value.trim() || prompt('请输入保存文件名（不含扩展名）');
+      if (!filename) return;
+      const status = $('#ai-status');
+      status.textContent = '保存中...';
+      try {
+        const data = await api('/ai/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code, filename, overwrite: true }),
+        });
+        status.textContent = `已保存：${data.filename}，30 秒内自动注册`;
+        status.style.color = 'var(--up)';
+        loadPyStrategies();
+      } catch (e) {
+        const msg = e.message;
+        status.textContent = '保存失败：' + (typeof msg === 'string' ? msg : JSON.stringify(msg));
+        status.style.color = 'var(--down)';
+      }
+    }
+
+    function _previewDescription() {
+      const code = $('#ai-code').value.trim();
+      const descEl = $('#ai-description');
+      if (!code) {
+        descEl.textContent = '（代码为空，请先在左侧输入需求并点击「生成策略」）';
+        return;
+      }
+      const m = code.match(/STRATEGY_DESCRIPTION\s*=\s*("""([\s\S]*?)"""|'''([\s\S]*?)'''|"([^"\n]*)"|'([^'\n]*)')/);
+      if (!m) {
+        descEl.textContent = '（代码中未找到 STRATEGY_DESCRIPTION，生成后策略说明将显示在这里）';
+        return;
+      }
+      const raw = m[2] || m[3] || m[4] || m[5] || '';
+      descEl.textContent = raw.trim();
+    }
+
+    $('#ai-code').addEventListener('input', _previewDescription);
+
+    // -------------------- Top-level app switch --------------------
+    function showApp(name) {
+      const main = $('.app');
+      const factory = $('#factory-app');
+      const navMain = $('#nav-main');
+      const navFactory = $('#nav-factory');
+      if (name === 'factory') {
+        main.style.display = 'none';
+        factory.classList.add('active');
+        navMain.classList.remove('active');
+        navFactory.classList.add('active');
+        _previewDescription();
+      } else {
+        main.style.display = '';
+        factory.classList.remove('active');
+        navMain.classList.add('active');
+        navFactory.classList.remove('active');
+        window.dispatchEvent(new Event('resize'));
+      }
+    }
+
+    // -------------------- Resizable panes --------------------
+    (function initResizers() {
+      const layout = $('#factory-layout');
+      if (!layout) return;
+      const configPane = $('#factory-pane-config');
+      const codePane = $('#factory-pane-code');
+      const descPane = $('#factory-pane-desc');
+      const handles = layout.querySelectorAll('.resize-handle');
+      let activeHandle = null;
+      const SPLITTER_WIDTH = 6;
+      const MIN_CONFIG = 180, MAX_CONFIG = 600;
+      const MIN_MIDDLE = 180;
+
+      function setColumns(configPx, codeFr, descFr) {
+        layout.style.gridTemplateColumns = `${configPx}px ${SPLITTER_WIDTH}px ${codeFr}fr ${SPLITTER_WIDTH}px ${descFr}fr`;
+      }
+
+      handles.forEach(handle => {
+        handle.addEventListener('mousedown', (e) => {
+          activeHandle = handle;
+          handle.classList.add('dragging');
+          e.preventDefault();
+        });
+      });
+
+      document.addEventListener('mousemove', (e) => {
+        if (!activeHandle) return;
+        const rect = layout.getBoundingClientRect();
+        const available = rect.width - SPLITTER_WIDTH * 2;
+        const x = e.clientX - rect.left;
+
+        if (activeHandle.dataset.resize === 'config-code') {
+          let configPx = Math.max(MIN_CONFIG, Math.min(MAX_CONFIG, x - SPLITTER_WIDTH / 2));
+          const rest = Math.max(available - configPx, MIN_MIDDLE * 2);
+          setColumns(configPx, rest / 2, rest / 2);
+        } else if (activeHandle.dataset.resize === 'code-desc') {
+          const configW = configPane.getBoundingClientRect().width;
+          const rest = Math.max(available - configW, MIN_MIDDLE * 2);
+          const codeX = x - configW - SPLITTER_WIDTH;
+          let codePx = Math.max(MIN_MIDDLE, Math.min(rest - MIN_MIDDLE, codeX));
+          const descPx = rest - codePx;
+          setColumns(configW, codePx, descPx);
+        }
+      });
+
+      document.addEventListener('mouseup', () => {
+        if (activeHandle) activeHandle.classList.remove('dragging');
+        activeHandle = null;
+      });
+    })();
+
+    // -------------------- 自定义回测 --------------------
+    let _btFactorMode = 'single';   // single / multi（因子单/多选）
+    let _btLastTxt = { filename: '', content: '' };  // 缓存最近一次导出内容
+
+    function openFactorBacktestModal() {
+      if (!state.factors || !state.factors.length) { alert('请先点击「刷新」加载因子列表'); return; }
+      const factorOpts = state.factors.filter(f => f.status === 'active' || f.status === 'draft')
+        .map(f => `<label><input type="checkbox" value="${f.factor_id}"> ${f.factor_id} ${f.name}</label>`).join('');
+      document.getElementById('bt-modal-title').textContent = '因子自定义回测';
+      document.getElementById('bt-modal-body').innerHTML = `
+        <div class="bt-step">① 选择因子模式</div>
+        <div class="bt-radio-row">
+          <label><input type="radio" name="bt-fmode" value="single" checked onchange="_btFactorMode='single'"> 单因子</label>
+          <label><input type="radio" name="bt-fmode" value="multi" onchange="_btFactorMode='multi'"> 多因子（加权投票）</label>
+        </div>
+        <div class="bt-step">② 选择因子（${_btFactorMode === 'multi' ? '可多选' : '单选'}）</div>
+        <div class="bt-factor-pick" id="bt-factor-pick">${factorOpts}</div>
+        <div class="bt-step">③ 回测参数（UTC，精确到分钟）</div>
+        <div class="bt-form-row">
+          <div class="field"><label>标的</label><input id="bt-f-symbol" value="${state.selectedSymbol || 'BTC/USDT'}"></div>
+          <div class="field"><label>信号方式</label><select id="bt-f-method">
+            <option value="direction">direction（按因子方向）</option>
+            <option value="zscore">zscore（Z-score 阈值）</option>
+            <option value="hold">hold（持有期+因子统计）</option>
+          </select></div>
+          <div class="field"><label>买入时间 UTC</label><input id="bt-f-buy" type="datetime-local" step="60" value="${_defaultBtTime(-30)}"></div>
+          <div class="field"><label>卖出时间 UTC</label><input id="bt-f-sell" type="datetime-local" step="60" value="${_defaultBtTime(0)}"></div>
+          <div class="field"><label>初始资金 USDT</label><input id="bt-f-amount" type="number" step="100" value="10000"></div>
+          <div class="field"><label>Z-score 窗口（zscore 方式）</label><input id="bt-f-window" type="number" value="1440"></div>
+          <div class="field"><label>入场阈值（zscore 方式）</label><input id="bt-f-thresh" type="number" step="0.1" value="2.0"></div>
+        </div>
+        <div style="margin-top:10px;"><button class="btn-accent" onclick="runFactorBacktest()">开始回测</button></div>
+        <div class="bt-result" id="bt-result"></div>
+      `;
+      document.getElementById('bt-modal').style.display = 'flex';
+    }
+
+    function openStrategyBacktestModal() {
+      const mdList = (state.strategies || []).filter(s => s.registered);
+      const pyList = (state.pyStrategies || []).filter(s => s.registered);
+      const opts = [
+        ...mdList.map(s => `<option value="${s.strategy_id}|md">${s.strategy_id} ${s.name}（双文件制）</option>`),
+        ...pyList.map(s => `<option value="${s.strategy_id}|py">${s.strategy_id} ${s.name}（纯Python）</option>`),
+      ].join('');
+      if (!opts) { alert('暂无可回测策略，请先刷新策略列表'); return; }
+      document.getElementById('bt-modal-title').textContent = '策略自定义回测（选股+持有期）';
+      document.getElementById('bt-modal-body').innerHTML = `
+        <div class="bt-step">① 选择策略</div>
+        <select id="bt-s-strategy" style="width:100%;background:var(--panel-2);border:1px solid var(--border);color:var(--text-1);border-radius:3px;padding:6px 8px;font-size:12px;">${opts}</select>
+        <div class="hint" style="margin:4px 0 10px;">在买入时间运行 generate 拿订单，按等额资金买入策略声明标的，卖出时间全平。</div>
+        <div class="bt-step">② 回测参数（UTC，精确到分钟）</div>
+        <div class="bt-form-row">
+          <div class="field"><label>买入时间 UTC</label><input id="bt-s-buy" type="datetime-local" step="60" value="${_defaultBtTime(-30)}"></div>
+          <div class="field"><label>卖出时间 UTC</label><input id="bt-s-sell" type="datetime-local" step="60" value="${_defaultBtTime(0)}"></div>
+          <div class="field"><label>初始资金 USDT</label><input id="bt-s-amount" type="number" step="100" value="10000"></div>
+        </div>
+        <div style="margin-top:10px;"><button class="btn-accent" onclick="runStrategyBacktest()">开始回测</button></div>
+        <div class="bt-result" id="bt-result"></div>
+      `;
+      document.getElementById('bt-modal').style.display = 'flex';
+    }
+
+    function closeBtModal() { document.getElementById('bt-modal').style.display = 'none'; }
+
+    function _defaultBtTime(dayOffset) {
+      const d = new Date(); d.setUTCMinutes(0, 0, 0); d.setUTCDate(d.getUTCDate() + dayOffset);
+      return d.toISOString().slice(0, 16);
+    }
+
+    function _isoFromLocal(v) { return v ? v + ':00Z' : ''; }
+
+    async function runFactorBacktest() {
+      const checked = Array.from(document.querySelectorAll('#bt-factor-pick input:checked')).map(i => i.value);
+      const mode = _btFactorMode;
+      if (!checked.length) { alert('请选择至少一个因子'); return; }
+      if (mode === 'single' && checked.length > 1) { alert('单因子模式只允许选 1 个'); return; }
+      const body = {
+        factor_ids: checked,
+        symbol: document.getElementById('bt-f-symbol').value.trim(),
+        buy_time: _isoFromLocal(document.getElementById('bt-f-buy').value),
+        sell_time: _isoFromLocal(document.getElementById('bt-f-sell').value),
+        amount: parseFloat(document.getElementById('bt-f-amount').value),
+        signal_method: document.getElementById('bt-f-method').value,
+        zscore_window: parseInt(document.getElementById('bt-f-window').value) || 1440,
+        entry_threshold: parseFloat(document.getElementById('bt-f-thresh').value) || 2.0,
+      };
+      await _doBacktest('factor', body);
+    }
+
+    async function runStrategyBacktest() {
+      const sel = document.getElementById('bt-s-strategy').value;
+      const [sid, kind] = sel.split('|');
+      const body = {
+        strategy_id: sid, strategy_kind: kind,
+        buy_time: _isoFromLocal(document.getElementById('bt-s-buy').value),
+        sell_time: _isoFromLocal(document.getElementById('bt-s-sell').value),
+        amount: parseFloat(document.getElementById('bt-s-amount').value),
+      };
+      await _doBacktest('strategy', body);
+    }
+
+    async function _doBacktest(kind, body) {
+      const resEl = document.getElementById('bt-result');
+      resEl.innerHTML = '<div class="hint">回测进行中...</div>';
+      try {
+        const r = await fetch(`/api/backtest/${kind}`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+        const data = await r.json();
+        if (!r.ok) { resEl.innerHTML = `<div class="upload-status err">请求失败: ${data.detail || r.status}</div>`; return; }
+        const rr = data.result || {};
+        if (!data.ok) {
+          // 优先用顶层 error 字段（后端已设为 result.error）
+          const msg = data.error || rr.error || '未知错误';
+          resEl.innerHTML = `<div class="upload-status err">回测失败: ${msg}</div>`;
+          return;
+        }
+        _btLastTxt = { filename: data.txt_filename, content: data.txt_content };
+        _renderBtResult(resEl, rr, data.txt_filename);
+      } catch (e) {
+        resEl.innerHTML = `<div class="upload-status err">回测异常: ${e.message}</div>`;
+      }
+    }
+
+    function _renderBtResult(el, rr, filename) {
+      const pnlClass = rr.total_pnl >= 0 ? 'up' : 'down';
+      const posRows = (rr.positions || []).map(p => `
+        <tr><td>${p.symbol}</td><td>${p.side}</td><td>${p.qty.toFixed(6)}</td>
+        <td>${p.buy_price.toFixed(4)}</td><td>${p.sell_price.toFixed(4)}</td>
+        <td>${p.notional.toFixed(2)}</td>
+        <td style="color:${p.pnl>=0?'var(--up)':'var(--down)'}">${p.pnl.toFixed(2)}</td>
+        <td>${p.return_pct.toFixed(2)}%</td></tr>`).join('');
+      const flowRows = (rr.transactions || []).map((t, i) => {
+        const isBuy = t.action === 'open';
+        const actionCn = isBuy ? '买入' : '卖出';
+        const cls = isBuy ? 'buy' : 'sell';
+        return `<tr class="${cls}">
+          <td>${i + 1}</td>
+          <td>${t.time}</td>
+          <td>${actionCn}</td>
+          <td>${t.symbol}</td>
+          <td>${t.side}</td>
+          <td>${t.price.toFixed(4)}</td>
+          <td>${t.qty.toFixed(6)}</td>
+          <td>${t.notional.toFixed(2)}</td>
+          <td>${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}</td>
+          <td>${t.cum_pnl >= 0 ? '+' : ''}${t.cum_pnl.toFixed(2)}</td>
+        </tr>`;
+      }).join('');
+      el.innerHTML = `
+        <div class="bt-stat-grid">
+          <div class="bt-stat"><div class="label">方向</div><div class="value">${rr.direction}</div></div>
+          <div class="bt-stat"><div class="label">总盈亏 (USDT)</div><div class="value ${pnlClass}">${rr.total_pnl.toFixed(2)}</div></div>
+          <div class="bt-stat"><div class="label">总收益率</div><div class="value ${pnlClass}">${rr.total_return_pct.toFixed(2)}%</div></div>
+          <div class="bt-stat"><div class="label">期末资金</div><div class="value">${rr.final_equity.toFixed(2)}</div></div>
+          <div class="bt-stat"><div class="label">持有</div><div class="value">${rr.hold_minutes} 分</div></div>
+          <div class="bt-stat"><div class="label">年化</div><div class="value ${pnlClass}">${rr.annualized_return.toFixed(2)}%</div></div>
+          <div class="bt-stat"><div class="label">最大浮盈</div><div class="value up">${rr.max_floating_profit.toFixed(2)}</div></div>
+          <div class="bt-stat"><div class="label">最大浮亏</div><div class="value down">${rr.max_floating_loss.toFixed(2)}</div></div>
+        </div>
+        ${rr.positions && rr.positions.length ? `<table class="bt-positions"><thead><tr><th>标的</th><th>方向</th><th>数量</th><th>开仓价</th><th>平仓价</th><th>名义</th><th>盈亏</th><th>收益率</th></tr></thead><tbody>${posRows}</tbody></table>` : ''}
+        ${flowRows ? `<div class="bt-flow-section"><div class="section-title">交易流水（买入/卖出）</div><table class="bt-flow"><thead><tr><th>#</th><th>时间(UTC)</th><th>动作</th><th>标的</th><th>方向</th><th>价格</th><th>数量</th><th>名义价值</th><th>盈亏</th><th>累计盈亏</th></tr></thead><tbody>${flowRows}</tbody></table></div>` : ''}
+        <div class="bt-export">
+          <button class="btn-accent" onclick="_exportBtTxt()">导出报告 (${filename})</button>
+        </div>
+      `;
+    }
+
+    function _exportBtTxt() {
+      if (!_btLastTxt.content) { alert('无报告可导出'); return; }
+      const blob = new Blob([_btLastTxt.content], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = _btLastTxt.filename;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    // -------------------- File Upload (因子/策略) --------------------
+    function onDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }
+    function onDragLeave(e) { e.preventDefault(); e.currentTarget.classList.remove('drag-over'); }
+    function onDrop(e, kind) {
+      e.preventDefault();
+      e.currentTarget.classList.remove('drag-over');
+      const files = e.dataTransfer.files;
+      if (files && files.length) uploadFile(files[0], kind);
+    }
+    function onFilePick(e, kind) {
+      const f = e.target.files[0];
+      if (f) uploadFile(f, kind);
+      e.target.value = ''; // 允许重复选同一文件
+    }
+
+    // kind: 'factor' -> 后端 'factor'；'strategy' -> 按扩展名分发 'strategy_md'/'strategy_py'
+    async function uploadFile(file, kind) {
+      const name = file.name || '';
+      let apiKind;
+      if (kind === 'factor') {
+        if (!name.toLowerCase().endsWith('.md')) { showUploadStatus('factor', '仅支持 .md 文件', true); return; }
+        apiKind = 'factor';
+      } else if (kind === 'strategy') {
+        const low = name.toLowerCase();
+        if (low.endsWith('.md')) apiKind = 'strategy_md';
+        else if (low.endsWith('.py')) apiKind = 'strategy_py';
+        else { showUploadStatus('strategy', '仅支持 .md 或 .py 文件', true); return; }
+      } else { return; }
+
+      const statusKey = kind === 'factor' ? 'factor' : 'strategy';
+      showUploadStatus(statusKey, `上传中: ${name} ...`, false);
+      const fd = new FormData();
+      fd.append('file', file);
+      try {
+        const r = await fetch(`/api/upload/${apiKind}`, { method: 'POST', body: fd });
+        const data = await r.json();
+        if (r.ok && data.ok) {
+          showUploadStatus(statusKey, data.message || `上传成功: ${name}`, false);
+          // 刷新左侧列表
+          if (kind === 'factor') loadFactors();
+          else { loadStrategies(); loadPyStrategies(); }
+        } else {
+          const detail = data.detail || data.message || JSON.stringify(data);
+          showUploadStatus(statusKey, `上传失败: ${detail}`, true);
+        }
+      } catch (e) {
+        showUploadStatus(statusKey, `上传异常: ${e.message}`, true);
+      }
+    }
+
+    function showUploadStatus(key, msg, isErr) {
+      const el = document.getElementById(`upload-status-${key}`);
+      if (!el) return;
+      el.textContent = msg;
+      el.className = 'upload-status ' + (isErr ? 'err' : 'ok');
+    }
+
+    // -------------------- Data Cleaning --------------------
+    async function loadCleaningConfig() {
+      try {
+        const r = await fetch('/api/cleaning/config').then(r => r.json());
+        if (!r.ok) return;
+        const s = r.state || {};
+        $('#cleaning-enabled').checked = !!s.enabled;
+        const rules = s.rules || {};
+        // pin_bar
+        const pb = rules.pin_bar || {};
+        $('#rule-pin_bar').checked = !!pb.enabled;
+        const pbParams = pb.params || {};
+        if (pbParams.max_wick_body_ratio != null) $('#pin-ratio').value = pbParams.max_wick_body_ratio;
+        // gap_fill
+        const gf = rules.gap_fill || {};
+        $('#rule-gap_fill').checked = !!gf.enabled;
+        const gfParams = gf.params || {};
+        if (gfParams.method) $('#gap-method').value = gfParams.method;
+        // downtime_mask
+        const dm = rules.downtime_mask || {};
+        $('#rule-downtime_mask').checked = !!dm.enabled;
+        const dmParams = dm.params || {};
+        if (dmParams.max_zero_volume_bars != null) $('#downtime-bars').value = dmParams.max_zero_volume_bars;
+        $('#cleaning-status').textContent = s.enabled ? '清洗已启用' : '清洗已关闭';
+      } catch (e) { console.error('loadCleaningConfig', e); }
+    }
+
+    async function saveCleaningConfig() {
+      const body = {
+        enabled: $('#cleaning-enabled').checked,
+        rules: {
+          pin_bar: { enabled: $('#rule-pin_bar').checked, params: { max_wick_body_ratio: parseFloat($('#pin-ratio').value) || 3.0 } },
+          gap_fill: { enabled: $('#rule-gap_fill').checked, params: { method: $('#gap-method').value } },
+          downtime_mask: { enabled: $('#rule-downtime_mask').checked, params: { max_zero_volume_bars: parseInt($('#downtime-bars').value) || 10 } },
+        }
+      };
+      try {
+        const r = await fetch('/api/cleaning/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json());
+        if (r.ok) {
+          $('#cleaning-status').textContent = r.state.enabled ? '清洗已启用（已保存，下次读取即生效）' : '清洗已关闭（已保存）';
+          // 若清洗开启且当前在主界面，刷新 K线以反映清洗效果
+          if (r.state.enabled && !document.getElementById('factory-app').classList.contains('active')) loadKlines();
+        }
+      } catch (e) { console.error('saveCleaningConfig', e); }
+    }
+
+    // -------------------- Tabs --------------------
+    // 每个面板内的 tab 独立切换：左下（持仓/净值/信号/清洗）与右侧（下单/挂单/因子/策略）互不影响
+    document.querySelectorAll('.tabs').forEach(tabList => {
+      tabList.querySelectorAll('.tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+          const panel = tabList.parentElement;
+          tabList.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+          panel.querySelectorAll(':scope > .tab-content').forEach(c => c.classList.remove('active'));
+          tab.classList.add('active');
+          const id = 'tab-' + tab.dataset.tab;
+          $('#' + id).classList.add('active');
+          if (tab.dataset.tab === 'equity') loadEquity();
+          if (tab.dataset.tab === 'factors') { loadFactors(); loadFactorSeries(); }
+          if (tab.dataset.tab === 'signals') loadRules();
+          if (tab.dataset.tab === 'strategies') { loadStrategies(); loadPyStrategies(); }
+          if (tab.dataset.tab === 'cleaning') loadCleaningConfig();
+          if (tab.dataset.tab === 'orders') { loadOrders(); loadTrades(); }
+        });
+      });
+    });
+
+    $('#timezone').addEventListener('change', (e) => { state.tz = e.target.value; pollState(); });
+
+    // -------------------- 主布局分割条拖拽 --------------------
+    (function initMainSplitters() {
+      const app = document.querySelector('.app');
+      if (!app) return;
+      const colSplit = app.querySelector('.splitter-h[data-resize="col-main"]');
+      const rowSplit = app.querySelector('.row-split[data-resize="row-left"]');
+      const MIN_COL = 200;       // 左右列最小像素
+      const MIN_ROW_TOP = 80;    // 行情面板最小高度（足够显示工具条即可）
+      const MIN_ROW_BOT = 80;    // 左下面板最小高度（足够显示 tab 头即可）
+      let active = null;
+      let startX = 0, startY = 0;
+      let leftFr = 2, rightFr = 1;
+      let topPx = 0, botPx = 0;  // 行情/左下 实际像素，仅拖动后记录
+      let userSetRow = false;    // 用户是否拖动过分隔条
+      let userSetCol = false;
+
+      const applyCol = () => {
+        const total = leftFr + rightFr;
+        const leftPct = (leftFr / total) * 100;
+        const rightPct = (rightFr / total) * 100;
+        app.style.setProperty('--col-left', `${leftPct}fr`);
+        app.style.setProperty('--col-right', `${rightPct}fr`);
+      };
+      const applyRow = () => {
+        if (topPx < 0 || botPx < 0) return;  // 仅防负值，允许拖到 0
+        const cl = app.querySelector('.col-left');
+        cl.style.setProperty('--row-top', `${topPx}px`);
+        cl.style.setProperty('--row-bot', `${botPx}px`);
+      };
+
+      if (colSplit) {
+        colSplit.addEventListener('mousedown', (e) => {
+          active = 'col'; startX = e.clientX;
+          colSplit.classList.add('dragging');
+          e.preventDefault();
+        });
+      }
+      if (rowSplit) {
+        rowSplit.addEventListener('mousedown', (e) => {
+          active = 'row'; startY = e.clientY;
+          const cl = app.querySelector('.col-left');
+          topPx = cl.children[0].getBoundingClientRect().height;
+          botPx = cl.children[2].getBoundingClientRect().height;
+          rowSplit.classList.add('dragging');
+          e.preventDefault();
+        });
+      }
+      document.addEventListener('mousemove', (e) => {
+        if (!active) return;
+        if (active === 'col') {
+          // 列方向：跟随鼠标，仅防止越界导致另一侧变负
+          const rect = app.getBoundingClientRect();
+          const SPLIT = 6;
+          const usable = rect.width - SPLIT;
+          const x = e.clientX - rect.left;
+          const leftPx = Math.max(0, Math.min(usable, x));
+          const rightPx = usable - leftPx;
+          leftFr = leftPx; rightFr = rightPx;
+          userSetCol = true;
+          applyCol();
+        } else if (active === 'row') {
+          // 行方向：鼠标动多少跟多少，仅防止越界导致另一侧变负
+          const dy = e.clientY - startY;
+          let newTop = topPx + dy;
+          const cl = app.querySelector('.col-left');
+          const total = cl.getBoundingClientRect().height - 6;
+          newTop = Math.max(0, Math.min(total, newTop));
+          topPx = newTop; botPx = total - newTop;
+          userSetRow = true;
+          applyRow();
+        }
+      });
+      document.addEventListener('mouseup', () => {
+        if (!active) return;
+        active = null;
+        document.querySelectorAll('.splitter-h.dragging, .row-split.dragging')
+          .forEach(el => el.classList.remove('dragging'));
+        // 拖完立即让图表重新适配
+        if (state.klineChart) state.klineChart.resize();
+        if (state.equityChart) state.equityChart.resize();
+        if (state.factorChart) state.factorChart.resize();
+      });
+      // 窗口大小变化：保持上方像素高度不变，下方吸收/释放剩余空间
+      window.addEventListener('resize', () => {
+        const cl = app.querySelector('.col-left');
+        if (cl && userSetRow && topPx > 0) {
+          const total = cl.getBoundingClientRect().height - 6;
+          // 窗口变小：先压缩上方，再压缩下方
+          if (topPx > total) topPx = total;
+          botPx = Math.max(0, total - topPx);
+          applyRow();
+        }
+        if (state.klineChart) state.klineChart.resize();
+        if (state.equityChart) state.equityChart.resize();
+        if (state.factorChart) state.factorChart.resize();
+      });
+    })();
+
+    // -------------------- Init --------------------
+    async function init() {
+      // 最多 15 秒后无论如何关闭 loading modal，避免 API 长时间不通时卡死
+      setTimeout(hideLoadingModal, 15000);
+      renderMAToolbar();
+      await refreshAll();
+      await loadOrders();
+      await loadTrades();
+      loadCleaningConfig();
+      // 每 10 秒全量刷新一次（与服务端 tick 间隔对齐）
+      setInterval(refreshAll, 10000);
+      setInterval(() => { $('#clock').textContent = nowStr(); }, 1000);
+      // 头顶时间对照：UTC 与 SIN(+8)，秒级刷新
+      const tickClocks = () => {
+        const pad = (n) => String(n).padStart(2, '0');
+        const fmt = (d) => `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+        const now = Date.now();
+        document.getElementById('clock-utc').textContent = fmt(new Date(now));
+        document.getElementById('clock-sin').textContent = fmt(new Date(now + 8 * 3600 * 1000));
+      };
+      tickClocks();
+      setInterval(tickClocks, 1000);
+      window.addEventListener('resize', () => {
+        state.klineChart && state.klineChart.resize();
+        state.equityChart && state.equityChart.resize();
+        state.factorChart && state.factorChart.resize();
+      });
+    }
+    init();
+  </script>
+</body>
+</html>

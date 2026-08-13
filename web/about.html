@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>关于 — CryptoPaperLab</title>
+  <style>
+    :root {
+      --bg: #0b0e11;
+      --panel: #151a20;
+      --panel-2: #1e2329;
+      --border: #2b3139;
+      --text: #eaecef;
+      --text-2: #848e9c;
+      --accent: #f0b90b;
+      --up: #0ecb81;
+      --down: #f6465d;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; line-height: 1.7; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    header {
+      height: 48px; background: var(--panel); border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between; padding: 0 16px;
+      position: sticky; top: 0; z-index: 100;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px; }
+    .brand small { display: block; color: var(--text-2); font-size: 11px; font-weight: 400; line-height: 1.2; }
+    .top-nav button {
+      padding: 6px 12px; border-radius: 4px; font-size: 12px;
+      background: transparent; color: var(--text-2); border: 1px solid transparent;
+      cursor: pointer;
+    }
+    .top-nav button:hover { color: var(--text); }
+
+    .layout { display: flex; gap: 32px; max-width: 1100px; margin: 0 auto; padding: 40px 20px 80px; align-items: flex-start; }
+    .side-nav {
+      position: sticky; top: 64px;
+      width: 180px; flex-shrink: 0;
+      background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+      padding: 14px 12px;
+      font-size: 13px;
+    }
+    .side-nav .nav-title { color: var(--text-2); font-size: 11px; margin-bottom: 8px; letter-spacing: 0.5px; }
+    .side-nav ul { list-style: none; margin: 0; padding: 0; }
+    .side-nav li { margin: 0; }
+    .side-nav a {
+      display: block; padding: 6px 8px; border-radius: 4px;
+      color: var(--text); font-size: 12.5px; line-height: 1.4;
+    }
+    .side-nav a:hover { background: var(--panel-2); text-decoration: none; color: var(--accent); }
+    .side-nav a.active { background: rgba(240, 185, 11, 0.12); color: var(--accent); }
+
+    .container { max-width: 900px; margin: 0 auto; padding: 40px 20px 80px; flex: 1; min-width: 0; }
+    .hero { text-align: center; margin-bottom: 48px; }
+    .hero h1 { font-size: 32px; margin: 0 0 12px; letter-spacing: -0.5px; }
+    .hero p { color: var(--text-2); font-size: 16px; margin: 0; }
+    .badges { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 16px; }
+    .badges span { font-size: 12px; color: var(--text-2); border: 1px solid var(--border); padding: 3px 8px; border-radius: 12px; }
+
+    h2 { color: var(--accent); font-size: 20px; margin: 40px 0 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px; scroll-margin-top: 64px; }
+    h3 { color: var(--text); font-size: 16px; margin: 24px 0 10px; scroll-margin-top: 64px; }
+    p { margin: 0 0 14px; }
+    ul { margin: 0 0 16px; padding-left: 22px; }
+    li { margin-bottom: 6px; }
+    code {
+      font-family: var(--mono); background: var(--panel-2); padding: 2px 6px;
+      border-radius: 3px; font-size: 12px; color: var(--accent);
+    }
+    pre {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+      padding: 14px; overflow-x: auto; font-family: var(--mono); font-size: 12px;
+    }
+    .notice {
+      background: rgba(240, 185, 11, 0.08); border: 1px solid rgba(240, 185, 11, 0.25);
+      border-radius: 6px; padding: 14px 16px; color: var(--text-2); font-size: 13px;
+    }
+    .notice strong { color: var(--accent); }
+
+    .meta-grid {
+      display: grid; grid-template-columns: 120px 1fr; gap: 8px 16px;
+      background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+      padding: 16px; font-size: 13px;
+    }
+    .meta-grid dt { color: var(--text-2); }
+    .meta-grid dd { margin: 0; }
+
+    footer { text-align: center; color: var(--text-2); font-size: 12px; margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--border); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <img src="lab.png" alt="CryptoPaperLab" style="width:26px;height:26px;border-radius:50%;object-fit:cover">
+      <div>
+        <div>CryptoPaperLab</div>
+        <small>同济大学 · 开发者 Zhong Li</small>
+      </div>
+    </div>
+    <nav class="top-nav">
+      <button onclick="location.href='index.html'">主界面</button>
+      <button onclick="location.href='index.html#factory'" style="display:none">策略工厂</button>
+    </nav>
+  </header>
+
+  <div class="layout">
+    <aside class="side-nav">
+      <div class="nav-title">页面导航</div>
+      <ul>
+        <li><a href="#section-overview">项目定位</a></li>
+        <li><a href="#section-features">核心特性</a></li>
+        <li><a href="#upload-spec">上传文件规范</a></li>
+        <li><a href="#section-stack">技术栈</a></li>
+        <li><a href="#section-quickstart">快速启动</a></li>
+        <li><a href="#section-constraints">核心约束</a></li>
+        <li><a href="#section-info">项目信息</a></li>
+        <li><a href="#section-disclaimer">免责声明</a></li>
+      </ul>
+    </aside>
+
+    <div class="container">
+    <div class="hero">
+      <h1>CryptoPaperLab</h1>
+      <p>本地加密货币量化模拟盘</p>
+      <div class="badges">
+        <span>论文级因子协议</span>
+        <span>AI 策略工厂</span>
+        <span>Binance 实时行情</span>
+        <span>10 秒 tick 全链路闭环</span>
+      </div>
+    </div>
+
+    <h2 id="section-overview">项目定位</h2>
+    <p>CryptoPaperLab 是一个<strong>完全本地运行</strong>的加密货币量化模拟盘系统，核心目标是让用户在无需 API Key、无需真实资金的情况下，完整跑通从因子研究 → 信号生成 → 模拟交易 → 盈亏验证的全流程。</p>
+    <div class="notice">
+      <strong>核心原则：</strong>不接真实交易所，不碰真实资金，所有交易数据均为本地模拟。
+    </div>
+
+    <h2 id="section-features">核心特性</h2>
+
+    <h3>行情数据</h3>
+    <ul>
+      <li>通过 CCXT 直连 Binance <strong>公共只读接口</strong>，无需任何 Key</li>
+      <li>支持现货 + USDT 本位永续（BTC、ETH、SOL、BNB、DOGE 等）</li>
+      <li>每 10 秒一个 tick，架构支持未来升级 WebSocket</li>
+      <li>自动回填最近 7 年 1m K 线，CSV 导入与断点续跑</li>
+    </ul>
+
+    <h3>因子系统</h3>
+    <ul>
+      <li><strong>Markdown 协议文档 + Python 实现</strong> 双文件制，MD 是唯一事实来源</li>
+      <li>12 条严格校验规则，不合规文件显示规则编号 + 字段名</li>
+      <li>热插拔：丢合规文件进目录，10 秒内自动注册生效</li>
+      <li>内置 482 个因子（动量、反转、波动率、成交量、微观结构、资金费率/基差等，含 Alpha101 / Alpha360 移植；83 个 active 已通过实算审核）</li>
+      <li>因子评级：逐因子评测 IC / RankIC / 信号回测指标并给出 S~D 综合评级，评级榜支持全库横向对比与指标排序</li>
+    </ul>
+
+    <h3>策略工厂</h3>
+    <ul>
+      <li>支持双文件制策略（MD + Python）和单文件纯 Python 策略</li>
+      <li>自然语言需求 → 自动生成合规 Python 策略代码</li>
+      <li>支持 OpenAI 兼容 API 与 Anthropic API</li>
+      <li>生成后可一键校验、保存并热注册，即刻在模拟盘上自动下单</li>
+    </ul>
+
+    <h3>模拟交易引擎</h3>
+    <ul>
+      <li>USDT 本位单账户，现货 + 永续（1～20x 杠杆）</li>
+      <li>市价单 / 限价单撮合，资金费结算，强平机制</li>
+      <li>完整风控：单标的名义仓位上限、单笔订单上限、维持保证金率</li>
+      <li>每笔订单标记 <code>source=manual</code> 或 <code>source=auto</code>，净值曲线持久化</li>
+    </ul>
+
+    <h3>可视化仪表盘</h3>
+    <ul>
+      <li>单页 Web 仪表盘（原生 JS + ECharts，无构建工具）</li>
+      <li>实时 K 线蜡烛图、因子时序图、净值曲线、持仓 / 订单 / 账户统计</li>
+      <li>因子与策略热插拔状态实时展示，10 秒自动轮询</li>
+    </ul>
+
+    <h2>上传文件规范</h2>
+    <p id="upload-spec">在主界面【因子】和【策略】选项卡右侧的「上传文件」区，可拖入或选取文件直接注册。三种文件类型的规范化要求如下，不符合规范的文件会被拒绝并报告具体原因。</p>
+
+    <h3>① 因子文档（.md）</h3>
+    <p>对应目录 <code>factors/</code>，模板见 <code>factors/TEMPLATE.md</code>。</p>
+    <ul>
+      <li><strong>文件命名</strong>：<code>&lt;FACTOR-ID&gt;_&lt;name&gt;.md</code>，如 <code>MOM-001_momentum_20d.md</code></li>
+      <li><strong>factor_id 格式</strong>：<code>^[A-Z]{2,8}-\d{3}$</code>，全库唯一</li>
+      <li><strong>name</strong>：snake_case，与实现文件 <code>factors/impl/&lt;name&gt;.py</code> 对应</li>
+    </ul>
+    <p><strong>frontmatter 必填字段：</strong></p>
+    <div class="meta-grid" style="grid-template-columns:160px 1fr;">
+      <dt>factor_id</dt><dd>因子唯一标识，如 MOM-001</dd>
+      <dt>name</dt><dd>snake_case 因子名</dd>
+      <dt>category</dt><dd>分类：momentum / reversal / volatility / volume / technical / microstructure / basis_funding / onchain / sentiment / cross_asset / ml_feature / other</dd>
+      <dt>version</dt><dd>语义化版本号，如 1.0.0</dd>
+      <dt>status</dt><dd>draft（注册不计算）/ active（参与计算）/ deprecated（仅展示）</dd>
+      <dt>frequency</dt><dd>计算频率：tick / 1m / 5m / 1h / 4h / 1d</dd>
+      <dt>lookback_bars</dt><dd>回看窗口（正整数，基于 1m 主K线）</dd>
+      <dt>inputs</dt><dd>输入字段子集，如 [close, volume]</dd>
+      <dt>params</dt><dd>参数字典，原样传给 compute(data, params)</dd>
+      <dt>implementation</dt><dd>实现文件路径，如 factors/impl/momentum_20d.py</dd>
+      <dt>entry</dt><dd>入口函数名（缺省 compute）</dd>
+      <dt>output</dt><dd>含 type / description / direction（值大看多 / 看空）</dd>
+    </div>
+    <p><strong>正文固定 10 个章节（标题齐全且顺序正确）：</strong></p>
+    <ol>
+      <li>因子概述</li>
+      <li>数学定义（至少 1 个 <code>$$...$$</code> 公式块）</li>
+      <li>输入与参数</li>
+      <li>计算步骤</li>
+      <li>输出与解释</li>
+      <li>数据依赖与频率</li>
+      <li>边界条件与异常处理</li>
+      <li>适用范围与已知局限</li>
+      <li>有效性检验记录</li>
+      <li>变更日志</li>
+    </ol>
+
+    <h3>② 策略 MD 文档（.md）</h3>
+    <p>对应目录 <code>strategies/</code>，模板见 <code>strategies/TEMPLATE.md</code>。需同时存在实现文件 <code>strategies/impl/&lt;name&gt;.py</code>。</p>
+    <ul>
+      <li><strong>文件命名</strong>：<code>&lt;STRATEGY-ID&gt;_&lt;name&gt;.md</code>，如 <code>STR-001_mom_breakout.md</code></li>
+      <li><strong>strategy_id 格式</strong>：<code>^[A-Z]{2,8}-\d{3}$</code>，全库唯一</li>
+    </ul>
+    <p><strong>frontmatter 必填字段：</strong></p>
+    <div class="meta-grid" style="grid-template-columns:160px 1fr;">
+      <dt>strategy_id</dt><dd>策略唯一标识，如 STR-001</dd>
+      <dt>name</dt><dd>snake_case 策略名</dd>
+      <dt>version</dt><dd>语义化版本号</dd>
+      <dt>status</dt><dd>draft / active / deprecated</dd>
+      <dt>symbols</dt><dd>交易标的列表，["*"] 表示全部</dd>
+      <dt>params</dt><dd>参数字典，可选 lookback_bars 控制K线窗口（缺省 200）</dd>
+      <dt>max_leverage</dt><dd>策略级杠杆上限，1~20</dd>
+      <dt>risk_limits</dt><dd>策略级风控覆盖（可空），与全局取更严</dd>
+      <dt>implementation</dt><dd>实现文件路径，strategies/impl/&lt;name&gt;.py</dd>
+      <dt>entry</dt><dd>入口函数名（缺省 generate）</dd>
+    </div>
+    <p><strong>正文固定 7 个章节（标题齐全且顺序正确）：</strong></p>
+    <ol>
+      <li>策略概述</li>
+      <li>逻辑与信号定义（至少 1 个 <code>$$...$$</code> 公式块）</li>
+      <li>参数说明</li>
+      <li>执行规则</li>
+      <li>风控约束</li>
+      <li>回测与有效性记录</li>
+      <li>变更日志</li>
+    </ol>
+
+    <h3>③ 纯 Python 策略（.py）</h3>
+    <p>对应目录 <code>py_strategies/</code>，完整接口规范见 <code>py_strategies/INTERFACE.md</code>。单文件制，无需额外 MD。</p>
+    <ul>
+      <li><strong>文件命名</strong>：<code>&lt;name&gt;.py</code>（建议与 STRATEGY_META.name 一致）</li>
+      <li><strong>strategy_id</strong>：以 <code>PYS-</code> 开头（如 PYS-101），与双文件制 STR- 区分</li>
+    </ul>
+    <p><strong>必备模块级常量 / 函数：</strong></p>
+    <div class="meta-grid" style="grid-template-columns:200px 1fr;">
+      <dt>STRATEGY_META</dt><dd>dict，必填键：strategy_id / name / version / status / symbols / params / max_leverage</dd>
+      <dt>STRATEGY_DESCRIPTION</dt><dd>str（Markdown），含策略概述、数学定义（至少 1 个 <code>$$...$$</code>）、参数表、风控说明</dd>
+      <dt>generate(ctx)</dt><dd>主入口函数，每个 tick 调用，返回 list[TargetOrder]；纯函数，禁止网络 IO / 随机性 / 读写全局状态</dd>
+    </div>
+    <p><strong>可选钩子函数：</strong> <code>on_init(ctx)</code>（注册后调用一次）、<code>validate_params(params)</code>（注册时静态校验）、<code>on_tick_end(ctx, result)</code>（generate 执行完毕后）。</p>
+    <p><strong>可用库白名单：</strong> <code>numpy</code> / <code>pandas</code> / <code>math</code> / <code>statistics</code> / <code>typing</code> / <code>__future__</code>；禁止 <code>os</code> / <code>sys</code> / <code>requests</code> / <code>ccxt</code> / <code>duckdb</code> / <code>socket</code> / <code>subprocess</code> / <code>pathlib</code>，禁止 <code>open(</code>。</p>
+    <p><strong>generate(ctx) 接收的 ctx 字段：</strong></p>
+    <div class="meta-grid" style="grid-template-columns:120px 1fr;">
+      <dt>data</dt><dd>{symbol: {"kline": df, "funding": df, "oi": df}}，kline 列含 open/high/low/close/volume 等，index 为 UTC</dd>
+      <dt>factors</dt><dd>{factor_id: {symbol: 最新值}}</dd>
+      <dt>positions</dt><dd>当前持仓列表，含 symbol / side / qty / entry_price 等</dd>
+      <dt>equity</dt><dd>当前账户净值（USDT）</dd>
+      <dt>params</dt><dd>STRATEGY_META["params"] 原样注入</dd>
+      <dt>now</dt><dd>本 tick 时间（UTC Timestamp）</dd>
+    </div>
+    <p><strong>TargetOrder 结构（generate 返回值元素）：</strong> <code>symbol</code>（必填）、<code>side</code>（必填，long/short/close）、<code>qty</code>（正数，close 时可省略）、<code>leverage</code>（1~max_leverage，缺省 1）。</p>
+
+    <div class="notice" style="margin-top:24px;">
+      <strong>提示：</strong>上传后文件会触发热重载，注册结果实时反映在左侧列表。文件大小限制 1MB，非法路径会被拒绝。
+    </div>
+
+    <h2 id="section-stack">技术栈</h2>
+    <div class="meta-grid">
+      <dt>后端</dt><dd>Python 3.11+ · FastAPI + Uvicorn + asyncio</dd>
+      <dt>行情</dt><dd>CCXT（REST 公共接口）</dd>
+      <dt>存储</dt><dd>DuckDB（单文件时序数据库）</dd>
+      <dt>前端</dt><dd>原生 JS + ECharts（CDN），无构建工具</dd>
+      <dt>LLM</dt><dd>OpenAI 兼容 API / Anthropic API</dd>
+      <dt>协议解析</dt><dd>PyYAML + 正则</dd>
+    </div>
+
+    <h2 id="section-quickstart">快速启动</h2>
+    <pre><code># 进入项目目录
+cd cryptopaperlab
+
+# 安装依赖
+pip install -r requirements.txt
+
+# 启动（首次启动自动后台回填 7 年历史数据）
+python run.py
+
+# 浏览器打开
+http://localhost:8000</code></pre>
+    <p>中国大陆用户需在 <code>config.yaml</code> 中配置 <code>proxy: http://127.0.0.1:7890</code>，否则无法访问 Binance API。</p>
+
+    <h2 id="section-constraints">核心约束</h2>
+    <ul>
+      <li>仅使用 Binance 公共只读接口，代码中不存在任何 API Key / Secret</li>
+      <li>所有时间戳以 UTC 存储</li>
+      <li>所有交易为本地虚拟数据，不与真实交易所交互</li>
+      <li>因子 / 策略实现必须是纯函数，禁止网络 IO、禁止随机性</li>
+    </ul>
+
+    <h2 id="section-info">项目信息</h2>
+    <div class="meta-grid">
+      <dt>学校</dt><dd>同济大学</dd>
+      <dt>开发者</dt><dd>Zhong Li</dd>
+      <dt>GitHub</dt><dd><a href="https://github.com/lizhong0525/sim_platform" target="_blank">lizhong0525/sim_platform</a></dd>
+      <dt>License</dt><dd>MIT</dd>
+    </div>
+
+    <h2 id="section-disclaimer">免责声明</h2>
+    <p>CryptoPaperLab 为模拟盘系统，所有交易数据均为本地虚拟生成，不构成任何投资建议。用户应独立决策并自行承担风险。加密货币市场存在极高风险，请理性投资。</p>
+
+    <footer>
+      MIT © 2026 Zhong Li · CryptoPaperLab
+    </footer>
+    </div>
+  </div>
+  <script>
+    // 滚动时高亮当前章节
+    (function() {
+      const links = document.querySelectorAll('.side-nav a[href^="#"]');
+      const map = new Map();
+      links.forEach(a => {
+        const id = a.getAttribute('href').slice(1);
+        const el = document.getElementById(id);
+        if (el) map.set(id, a);
+      });
+      const onScroll = () => {
+        let cur = null;
+        for (const [id, a] of map) {
+          const el = document.getElementById(id);
+          if (el && el.getBoundingClientRect().top <= 80) cur = a;
+        }
+        links.forEach(a => a.classList.remove('active'));
+        if (cur) cur.classList.add('active');
+      };
+      window.addEventListener('scroll', onScroll, { passive: true });
+      onScroll();
+    })();
+  </script>
+</body>
+</html>

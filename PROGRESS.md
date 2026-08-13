@@ -666,3 +666,477 @@ from superplatform.runtime.dual import (
 注意：DuckDB 缓存单进程写锁——同一时刻只能一个进程打开 `data/cache.duckdb`
 （评估/回测/live 并发跑会撞 `IO Error: Cannot open file`），05 的 API 映射
 若起后台任务需串行化或复用同一进程内的 store。
+
+---
+
+# 04 阶段详情（PROGRESS_04.md 并入）
+
+# PROGRESS_04.md — 04 评级与偏差控制（已完成，2026-08-13）
+
+理解的目标：移植 sim_platform 的 `app/factors/rating.py`（S~D 评级）、
+`app/bias_checkers.py`（六查）、`app/factor_metrics.py`（开发集指标 + 合格判定 +
+相关性矩阵），接 exchangia 内核的数据（01 的 DuckDB 缓存，经 DataProvider.fetch）
+与 02 的双文件因子，产出 `rating` / `metrics` / `bias-check` 三个 CLI 子命令，
+指标在 04 新模块内唯一权威实现，CLI 只调用不自算。
+
+## 移植口径与拍板（与源项目的差异，逐条记录）
+
+- **数据源**：源项目检查器从 `factor_value` 在线缓存表读因子历史值；本平台无落库
+  因子值历史（03 离线评估在内存计算），所有检查/指标/评级统一走源项目「落库为空
+  时的重算回退」口径——按注册实现 + K 线重算（含 lookback warmup），payload 里
+  recomputed/source 如实标注。取数从 `store.range_klines` 换成
+  `KlineFetcher`（同步包装异步 `provider.fetch`，进程内单事件循环，逐 symbol
+  失败返回空帧不拖垮整批，与 03 pipeline `_safe_fetch` 同语义）。
+- **频率泛化**：源项目只有 1m/1d 两档；本平台按因子 MD 声明频率取 bar 宽
+  （1m~1w 九档，MOM-001=1h）。源配置 `*_1m_*` 键在这里叫 `*_intraday_*`
+  （语义=非 1d 因子按自身频率的 bar 粒度），horizon/滚动窗口单位均为因子频率 bar。
+  信号回测年化按频率换算（1h→8760，经 `_BARS_PER_YEAR`，与 03 `periods_per_year` 一致）。
+- **insufficient 不出级**：源项目在「全部标的样本不足」时聚合层放占位 grade="D"；
+  按本阶段死规矩（样本不足返回 insufficient，不给假数字）改为
+  `status="insufficient"`、`grade=None`。横截面/funding/OI/mark_price 依赖因子
+  `status="not_supported"`（多标的 config 因子 required_symbols>1 同此）。
+- **横截面帧未移植**：双文件协议无横截面声明；多标的 config 因子在记录加载时标
+  `cross_sectional=True`，逐标的历史重算对它不成立，各检查如实 BLOCKED/
+  not_supported，不给假数字。
+- **相关性矩阵封顶 + 串行**：因子数封顶 `metrics_corr_max_factors=200`（超出按
+  factor_id 排序截断并 `truncated=true` 标注，满足「分块或封顶」规模约束）；源项目的
+  spawn 子进程池未移植（本平台因子库当前规模串行足够；批量提速靠跨因子共享 K 线
+  帧缓存 + DuckDB 结果缓存的增量重算）。
+- **缓存按 (factor_id, 数据版本) 键控**：新表 `eval_metrics_cache` /
+  `eval_rating_cache` / `eval_corr_cache` / `eval_bias_runs` / `eval_bias_results` /
+  `eval_oos_lock`，与 01 数据缓存同库（data/cache.duckdb，同进程多连接为 DuckDB
+  支持用法，已实测；跨进程仍单写者）。数据版本键 = 因子消费的 provider 缓存表逐
+  symbol 首末日期+行数的 sha256（metrics 末日期按开发集右端封顶，rating 不封顶）。
+  **写键在计算之后重取**（计算期间的增量拉取会改变数据版本，以写时状态为准，
+  后续读取才能命中——首版写成预取键导致评级榜缓存集体失效，已修并复验）。
+- **偏差语义按拍的板**：lookahead/full_sample/overfit 的 PASS 是真判定；
+  multiple_testing/cost/out_of_sample 的 PASS 仅表示「可计算」，payload 带 note，
+  显著性以 `significant_after_correction` 为准。六查 = 开发集五查 + 样本外
+  （scope=development 时样本外显示 LOCKED；scope=locked_oos 加跑样本外，
+  每因子只允许成功一次，eval_oos_lock 持久化，重复执行拒跑标 LOCKED）。
+- **多重检验家族**：CLI 一批次的全部因子即 BH 家族（family_size 如实进 payload；
+  单因子批次 family_size=1，adjusted=p）。
+- **overfit 证据**：config `bias_control.parameter_search` 只录了 MOM-001
+  （frozen=true, retuned_on_oos=false——02 创建以来 window=20 未变，git 可查）；
+  无证据因子如实 BLOCKED，不伪造 PASS。
+- **rating 方向语义**：解析双文件 MD `output.direction` 文本（含「看空」→bearish），
+  缺省 bullish_high=True；评级一律用 |RankIC|/|ICIR|/|Sharpe|，方向只影响回测持仓符号。
+
+## 改动/新增文件
+
+- 新增 `src/superplatform/evaluation/bias.py`：状态常量、`_json_safe`/`_scanable_source`
+  等移植件、`EvalFactorRecord`（双文件+config 双通道适配）、`KlineFetcher`、
+  `EvalCacheStore`（DuckDB 缓存）、`BiasCheckRunner`（六查移植）、
+  `BiasControlService`（同步批次 + md/json/csv 报告导出 + OOS 一次性锁）。
+- 新增 `src/superplatform/evaluation/factor_metrics.py`：`FactorMetricsCalculator`
+  （IC/RankIC/ICIR/衰减/分层/滚动/换手/相关性矩阵，唯一权威实现）+
+  `FactorMetricsService`（缓存、合格判定六项、qualification 汇总、CSV 导出）。
+- 新增 `src/superplatform/evaluation/rating.py`：评级纯函数逐行移植
+  （grade_of/_ic_metrics/_signal_backtest/compute_factor_metrics）+
+  `RatingService`（单因子评级/评级榜/缓存）。
+- 改动 `src/superplatform/runtime/cli.py`（纯增量）：`rating` / `metrics` /
+  `bias-check` 三个子命令；`_print_json` 用 ensure_ascii=True（GBK 控制台重定向
+  仍是合法 JSON）。既有子命令逻辑未动。
+- 改动 `config/default.yaml`：末尾新增 `bias_control:` 段（窗口/阈值/合格判定/
+  parameter_search，不改任何已有配置）。
+
+## 验收记录（全部为实际命令输出）
+
+### 任务 1：`rating --factor MOM-001 --json`（全研究池 40 标的，近 30 天 1h）
+
+```
+.venv/Scripts/python.exe -m superplatform.runtime.cli rating --factor MOM-001 --json
+status = ok | grade = S
+  rank_ic_mean: -0.09966481904131114      ic_mean: -0.10211436441986625
+  icir: -1.0278369884142948               sharpe: -3.3224798390148513
+  total_return_pct: -9.8765               max_drawdown_pct: -18.5329
+  win_rate: 0.4379                        n_samples: 25680
+  n_symbols: 40 / n_symbols_ok: 36        coverage: 0.9989
+  last_ts: 2026-08-13T06:00:00+00:00
+insufficient symbols: [PEPEUSDT, SHIBUSDT, FLOKIUSDT, BONKUSDT]   # 源端 Invalid symbol，如实剔除
+```
+（|RankIC|=0.0997≥0.05、|ICIR|=1.03≥0.5、|Sharpe|=3.32≥1.5 → S；动量在近 30 天
+窗口呈反转（IC 为负），评级用绝对值，notes 里如实说明口径。BTC/ETH 双子集冒烟：
+grade=A，per_symbol S/B。）
+
+### 任务 1：`rating --leaderboard`（无 ids 只读缓存）
+
+```
+rating --factor MOM-001 --refresh   → exit=0（按数据版本键落 eval_rating_cache）
+rating --leaderboard
+Factor ID      Grade  Status            RankIC     ICIR   Sharpe   Samples
+MOM-001        S      ok               -0.0997   -1.028    -3.32     25680
+LAH-002        -      not_evaluated ...（反向验证临时因子，验完已删）
+...（96 decorator factory + config 实例均 not_evaluated，绝不触发重算）
+共 99 个：rated=1 insufficient=0 not_supported=0 not_evaluated=98（本次计算 0）
+```
+
+### 任务 2：`metrics --factor MOM-001 --json`（开发集 2021→2024，36 标的，987,579 样本）
+
+```
+status=PARTIAL（36/40 标的可算，4 个源端无效标的如实进 warnings）
+window: 2021-01-01T00:00:00Z → 2024-12-31T23:59:59Z   horizons: [1,6,24,72,168]（1h bar）
+ic: -0.00591   rank_ic: -0.02932   icir: -1.12937   turnover: 0.06980
+p_value: 7.95e-187   decay_ratio: 0.9636
+ic_decay: h=1 rank_ic=-0.0293 / h=6 -0.0283 / h=24 -0.0429 / h=72 -0.0030 / h=168 -0.0006
+quantile buckets mean_return: [0.000283, -0.000166, 0.000042, 0.000133, 0.000275]
+rolling: mean=-0.0391 std=0.0346 positive_ratio=0.1253 count=5737
+qualification: qualified=false, reasons=[分层不单调, 多空差(-0.0000)过小]
+缓存：重跑 cache_hit=True，payload 逐字段一致（15s→秒级的差距主要在装配）
+导出：metrics --factor MOM-001 --output reports/MOM-001_metrics.csv（带 BOM 长表）
+qualification 汇总：metrics --qualification-summary --output reports/qualification_summary.csv
+  → total=99 evaluated=1 qualified=0 unqualified=1 not_evaluated=98
+相关性矩阵：metrics --correlation-matrix --ids MOM-001,LAH-002 --output reports/corr_probe.csv
+  → 2×2 Spearman，off-diagonal 0.0427，对角 1.0（LAH-002 清理后该矩阵缓存行已删）
+```
+
+### 任务 2：`bias-check --factor MOM-001 --scope development`（六查批次 + 报告导出）
+
+```
+.venv/Scripts/python.exe -m superplatform.runtime.cli bias-check --factor MOM-001 --scope development --output reports/
+Bias check run: 24db8f9650c0  scope=development
+Factor ID      Overall    Look    Full    MT      Overfit  Cost    OOS
+MOM-001        PASS       PASS    PASS    PASS    PASS     PASS    LOCKED
+Summary: total=1 PASS=1 FAIL=0 BLOCKED=0 ERROR=0 LOCKED=0
+Report: reports\bias_control_24db8f9650c0.md / .json     （约 12s，exit=0）
+
+明细（真判定证据）：
+  lookahead: PASS  compared=19580  max_abs_diff=0.0  tol=3.03e-08
+    2022-07-01 PASS compared=5500 | 2023-07-01 PASS compared=6380 | 2024-07-01 PASS compared=7700
+  full_sample: PASS  violations=[]（tokenize 剔除注释/字符串后扫描）
+  multiple_testing: PASS  p=2.21e-46 adj_p=2.21e-46 significant=True samples=986715 family_size=1
+  overfit: PASS（config parameter_search 声明 frozen=true 且未在样本外重调）
+  cost: PASS gross=+0.4015 net(最高档)=-0.9839 turnover=0.1069 samples=987543
+    逐档 net：0bps -0.9371 / 2bps -0.9569 / 5bps -0.9719 / 10bps -0.9839（1h 高换手信号扣费即死，真实）
+  oos: LOCKED can_run_once=true（development scope 不跑样本外）
+```
+
+### 反向验证（红→绿）
+
+① 空数据 rating 必须 insufficient 而非 S 级（RED）：
+```
+rating --factor MOM-001 --symbols NOSUCHUSDT --json
+  → exit=2
+  status = insufficient | grade = None | aggregate.insufficient = True
+  per_symbol: [(NOSUCHUSDT, insufficient=True, reason='K线数据为空')]
+```
+GREEN 侧：上方 MOM-001 全池 grade=S（ok）。
+
+② 含前视的因子六查前视项必须 FAIL（RED）：
+临时因子 LAH-002（imports/factors/，z-score 均值/标准差用整段样本计算=前视）：
+```
+bias-check --factor LAH-002 --scope development
+  → exit=1（硬门槛）
+  LAH-002  Overall=FAIL  Look=FAIL  Full=FAIL  MT=PASS  Overfit=BLOCKED  Cost=PASS  OOS=LOCKED
+  lookahead 明细：compared=21360  max_abs_diff=3.5259  tolerance=7.42e-07
+    2022-07-01 FAIL max_diff=1.2619 | 2023-07-01 FAIL max_diff=3.1969 | 2024-07-01 FAIL max_diff=3.5259
+  full_sample: FAIL（historical_values_changed=true；overfit BLOCKED=无冻结证据，如实）
+```
+GREEN 侧：MOM-001 lookahead PASS max_diff=0.0（见上）。
+
+③ 样本外一次性锁定（locked_oos 语义验证，LAH-002 限 BTCUSDT）：
+```
+首跑：bias-check --factor LAH-002 --symbols BTCUSDT --scope locked_oos
+  → OOS=PASS（complete=true, samples=4526, gross=-0.4522, net=-0.6864；PASS=可计算/跑完）
+二跑：同命令 → Overall=LOCKED，OOS=LOCKED
+  「锁定样本外已运行过一次，一次性锁定不允许重复执行」
+```
+
+清理（imports/ + eval 库行）：
+```
+rm imports/factors/LAH-002_lookahead_zscore.md imports/factors/impl/lookahead_zscore.py
+DELETE: eval_bias_results 3 行 / eval_oos_lock 1 行 / 相关 runs 3 行 / eval_corr_cache 清空
+新进程注册中心：LAH-002 after cleanup: None | MOM-001 still registered: True
+留存：eval_bias_runs/results 仅 MOM-001 的 development 批次 24db8f9650c0
+```
+
+### not_supported 分支（funding/OI/横截面依赖，不给假数字）
+
+```
+构造 EvalFactorRecord(data_types=["funding_rate"]) → status=not_supported, grade=None
+  note: 依赖输入 funding_rate 无本地时序数据，暂不支持评级
+构造 cross_sectional=True → status=not_supported（横截面/多标的因子暂不支持单标的时序评级）
+```
+
+## pytest 与地界自查
+
+```
+.venv/Scripts/python.exe -m pytest tests/ -q -p no:cacheprovider
+381 passed, 1 warning in 35.36s        # = 基线 381 / 0 skipped
+
+git status --short（仅 04 地界；其余 M/?? 为并行 05 的地界，未碰）：
+ M config/default.yaml                 # 末尾新增 bias_control 段
+ M src/superplatform/runtime/cli.py    # 仅新增 rating/metrics/bias-check 子命令
+?? src/superplatform/evaluation/bias.py
+?? src/superplatform/evaluation/factor_metrics.py
+?? src/superplatform/evaluation/rating.py
+（05 地界：pyproject.toml / requirements.txt / run.py / src/superplatform_web/** / web/）
+```
+
+未碰 tests/、01（data/、tools/）、02（factors/、strategies/、协议与注册中心）、
+03（runtime 其余文件）地界；未写任何 HTTP 路由；无 skip/todo/mock/|| true；
+未 commit（交总控）。imports/ 临时 LAH-002 已删（02 对 imports 的约定是运行时产物，
+不入库）。reports/ 产物（bias_control_*.md/json、MOM-001_metrics.csv、
+qualification_summary.csv）为运行时输出，.gitignore 覆盖。
+
+## 留给 05 的服务层接口（Python 调用，全部返回 JSON 可序列化 dict）
+
+```python
+from superplatform.runtime.config import Config
+from superplatform.runtime.cli import _setup_providers        # (providers, store)；store 用毕 close()
+from superplatform.evaluation.rating import RatingService
+from superplatform.evaluation.factor_metrics import FactorMetricsService
+from superplatform.evaluation.bias import BiasControlService
+
+config = Config.load("config/default.yaml", "config/exchanges.yaml", "config/factors.yaml")
+providers, store = _setup_providers(config)
+cache = config.get("data.cache.path", "data/cache.duckdb")
+
+rating = RatingService(config, providers, cache_path=cache, store=store, symbols=None)
+metrics = FactorMetricsService(config, providers, cache_path=cache, store=store, symbols=None)
+bias = BiasControlService(config, providers, cache_path=cache, store=store, symbols=None)
+# symbols=None → 默认 config data.symbols.perpetual 研究池；传 list[str] 覆盖。
+# 三个服务非线程安全（DuckDB 单写者）：API 映射需串行化（如单 worker 线程 +
+# asyncio.to_thread），不要与 live/回填进程并发开 data/cache.duckdb。
+
+# ① 评级（单因子）：因子未注册返回 None；
+#    payload["status"]: ok（aggregate.grade ∈ S~D）/ insufficient / not_supported
+rating.rate_factor("MOM-001", days=None, horizon=None, symbols=None, refresh=False) -> dict | None
+# ② 评级榜：ids=None 只读缓存（not_evaluated 不重算）；ids 子集 ≤compute_limit 同步计算
+rating.leaderboard(ids=None, days=None, horizon=None, refresh=False, compute_limit=20) -> dict
+# ③ 开发集指标（IC/RankIC/ICIR/衰减/分层/换手/滚动 + p_value/decay_ratio/qualification 块）
+metrics.factor_metrics("MOM-001", force=False) -> dict | None
+metrics.factor_metrics_many(["MOM-001", ...], on_progress=None) -> dict[str, dict | None]
+# ④ 合格判定汇总（只读缓存；refresh=True 限量补算 ≤refresh_limit 个）
+metrics.qualification_summary(refresh=False, refresh_limit=20) -> dict
+metrics.qualification_state("MOM-001") -> bool | None          # True/False/未评估
+# ⑤ 相关性矩阵（日频网格 Spearman；ids=None 全库，封顶 metrics_corr_max_factors）
+metrics.correlation_matrix(factor_ids=None) -> dict
+# ⑥ 六查批次：scope=development|locked_oos；同步执行、逐因子落库，返回 run 摘要
+bias.run("development", ["MOM-001"], run_id=None, on_progress=None) -> dict
+bias.report_data(run_id) -> dict | None                        # 批次全量明细
+bias.report(run_id, "md"|"json"|"csv") -> (content, filename)  # 报告导出（csv 带 BOM）
+bias.eval_store.latest_run_id() -> str | None                  # 最近批次
+# CSV 导出辅助：FactorMetricsService.metrics_csv / qualification_csv / correlation_csv
+```
+
+已实测（本阶段验收进程内调用）：rate_factor / leaderboard / factor_metrics /
+qualification_summary / report_data 全部返回可 json.dumps 的 dict，缓存命中
+cache_hit=True。
+
+## 已知限制（记录在案，不阻塞）
+
+- PEPEUSDT/SHIBUSDT/FLOKIUSDT/BONKUSDT 四个研究池标的在数据源端 Invalid symbol，
+  逐 symbol 剔除并如实进 warnings（metrics status=PARTIAL 即因此）。
+- config 通道（decorator）因子无 impl 路径：full_sample 静态扫描对其如实 BLOCKED；
+  评级/指标可用（同一冻结 compute 接口），leaderboard 默认只读缓存不自动计算。
+- 评级是近 N 天窗口快照，与开发集 metrics 口径不同（MOM-001 近 30 天 S 级、
+  开发集 RankIC -0.029 且不合格）——两者用途不同，payload notes 均如实标注。
+- 评估类进程与 live 不可并发（DuckDB 单写者），05 起后台任务需串行化。
+
+---
+
+# 05 阶段详情（PROGRESS_05.md 并入）
+
+# PROGRESS_05.md — 05 UI 四页（已完成，2026-08-13）
+
+理解的目标：把 sim_platform 的四个原生 JS+ECharts 页面接进 superplatform，
+后端按 sim 的 API 形状提供数据：index 看行情/净值/持仓（01 缓存 + 03 live），
+explorer 看因子/评级（02 注册中心 + 04 rating），bias-control 跑六查
+（04 BiasControlService）。所有 HTTP 路由 + 静态托管 + run.py 增强归本阶段；
+路由只调用服务，不重算指标。
+
+## 关键拍板（与任务书/源项目的差异，逐条记录）
+
+- **路由遮蔽修复（run.py 的核心增强）**：app.py 导入时即挂 `Mount("/", static)`
+  （frontend/dist），`app.include_router` 只能追加路由——后注册的 API 路由会被
+  静态挂载全部遮蔽成 404（探针 `/api/simprobe` 实测：include 成功但 404）。
+  run.py 新增 `mounts_to_tail()`：所有 Mount 挪到路由表末尾（相对顺序保持
+  web/ → frontend/dist），API 路由先匹配。只改 run.py，app.py 不动，tests 零影响。
+  探针红→绿：挪前 `probe: 404 {"detail":"Not Found"}` → 挪后 `probe: 200 {"probe":"ok"}`。
+- **三处 API 路径避让**（web/API_DIFF.md A 类）：sim 源页的 `GET /api/factors`、
+  `GET /api/strategies`、`DELETE /api/factors/{id}` 与 exchangia 既有冻结路由
+  撞名且 shape 不同（tests/test_web_introspect.py:245 等冻结了旧形状），前端
+  改调 `/api/registry/factors`、`/api/registry/strategies`、
+  `DELETE /api/registry/factors/{id}`，响应保持 sim 形状。这是四页 HTML 与源
+  仅有的内容差异（另有 4 处 display:none 隐藏策略工厂入口，任务书明确指令）。
+- **04 接线用服务层不用 CLI 子进程**：04 交付了 Python 服务接口
+  （PROGRESS_04.md 末尾），且 DuckDB 单进程写锁使子进程方案不可行
+  （web 进程持有 data/cache.duckdb）。`simserve.services04()` 惰性构造
+  RatingService/FactorMetricsService/BiasControlService（复用 _state 的
+  config/providers/store），全部调用经 `_S04_LOCK` 串行化（04 服务非线程安全）。
+- **sim 有而本平台没有的服务：如实 503/501**（不返回假空数据）：signals
+  （无独立信号引擎）、cleaning（未移植）、backtest/factor（无 sim 的因子买卖
+  回测引擎）、pystrategies（无双文件制外通道）。前端对这些有设计的错误展示。
+- **检查状态登记/人工解封是本层簿记**：attest/uncheck/override 状态落
+  `data/web_factor_check.json`（运行时产物，gitignored）；六查结果经
+  `data/web_bias_results.json` 留档 + 04 的 eval_bias_* 表（UI 批次与 04
+  共享 run_id，报告由 04 report 生成，重启后可导出）。
+- **run.py 默认自动启动模拟盘 live 会话**（DEM-001 + BTCUSDT,ETHUSDT，
+  config live.broker=simulated，**adapter=None 合成价格源**——本机 fapi 生产域
+  直连超时（BLOCKED_01/03），传真实 adapter 会让 _hook_data 每 tick 卡 30s
+  超时且 STALE 不下单；合成源即 03 CLI live 的默认行为，撮合/权益/持仓全是
+  真实计算）。经 lifespan 包装实现，只在 run.py 进程生效，tests 的 TestClient
+  不受影响；会话失败只记日志不拖垮服务。`--no-autolive` 关闭。
+- **策略回测映射 03 run_strategy**：amount 仅用于把归一化净值换算 USDT 展示；
+  本平台是权重调仓模型，无逐笔成交价 → positions/transactions 如实空数组
+  （前端据此隐藏明细表），汇总数字全部真实。buy_time/sell_time 经
+  dual_factor_defaults 传给运行时。
+- **新依赖 2 个**（00 地界文件，已加最小一行并在此备案）：python-multipart
+  （sim 上传接口的 multipart 表单必需，缺了 FastAPI 路由注册即炸）、openpyxl
+  （/api/factors/export 的 xlsx 导出）。已入 requirements.txt + pyproject.toml。
+- **符号映射**：UI 用 `BTC/USDT`，数据层用 `BTCUSDT`，路由层双向换算
+  （字段映射类适配）。K 线 period 聚合用 pandas resample（图表展示层聚合），
+  均线叠加复制 sim app/indicators.py（展示逻辑，非评估指标）。
+- **相关性矩阵默认因子集收窄**：sim 口径是「落库因子值的全部因子」；本平台
+  无落库因子值，对应物取 eval_metrics_cache 已评估因子（实测全库 99 因子重算
+  超过 10 分钟被超时杀掉，收窄后秒回）。未评估因子进 excluded 如实标注，
+  payload 带 note 说明口径。
+
+## 验收记录（全部为实际命令输出）
+
+### 任务 1：四页 200（真实 run.py 服务）
+
+```
+.venv/Scripts/python.exe -u run.py --port 8000
+auto-included routes: ['sim_admin','sim_bias','sim_market','sim_misc',
+                       'sim_rating','sim_registry','sim_state','sim_trading']
+GET /                -> 200
+GET /explorer.html   -> 200
+GET /bias-control.html -> 200
+GET /about.html      -> 200
+GET /explorer        -> 307（重定向 /explorer.html，导航栏用它）
+```
+
+AI 策略工厂入口已隐藏（index/explorer/about 共 4 处按钮 display:none，
+见 API_DIFF.md C 类；页面 DOM 实证见下方 Chrome 取证）。
+
+### 任务 2：API 接线（TestClient + 真实服务双层验证）
+
+**index 页 — K线（01 缓存）**：
+```
+GET /api/market/klines?symbol=BTC/USDT&limit=5
+  -> 200 count=5 last={'ts':'2026-08-11T23:59:00+00:00','open':63560.0,...}（缓存尾部）
+GET ...&start=2026-08-01&end=2026-08-11&limit=5000&ma=all
+  -> 200 period=5m（自动降采样）count=2880
+     ma keys=['MA5','MA10','MA20','MA30','MA60','MA83','MA_W','MA_M']
+GET /api/market/tickers -> 200 {'symbols':{'BTC/USDT':{'last_price':63572.0,
+  'change_24h_pct':...,'funding_rate':...,'open_interest':...},'ETH/USDT':{...}}}
+```
+
+**index 页 — 净值/持仓/账户（03 live，autolive 合成源模拟盘）**：
+```
+run.py 启动 ~50s 后：
+/api/state:  ticks=5 running=True stale=False
+             account={'equity':99990.0,'wallet_balance':49990.0,'margin_used':50000.0,...}
+             positions_n=1  tickers=['BTC/USDT','ETH/USDT']
+/api/trading/equity?limit=10 -> rows=5 last={'ts':'2026-08-13T07:42:10Z','equity':99990.0,...}
+/api/trading/orders?limit=5  -> orders=5（filled，真实撮合含拒单路径）
+```
+（对照：autolive 误传真实 adapter 时 fapi 超时 → tick STALE、零订单零净值点；
+改 adapter=None 后恢复——证明净值/持仓确实来自 live 会话而非编造的静态值。）
+
+**explorer 页 — 因子清单/预览/评级（02 + 04）**：
+```
+GET /api/registry/factors -> 200 MOM-001 active（02 双文件清单）
+GET /api/admin/overview   -> 200 counts={factors:1,strategies:1,pystrategies:0}
+GET /api/admin/factors/MOM-001/md   -> 200 content len=1625
+GET /api/admin/strategies/DEM-001/impl -> 200 content len=1423
+GET /api/admin/factors/MOM-001/rating?days=30 -> 200
+     status=active aggregate.grade=S（04 RatingService 真数据；rank_ic_mean=-0.0997 等）
+GET /api/admin/factors/ratings/leaderboard -> 200 entries[0]={MOM-001 grade:S computed:true}
+GET /api/admin/bias-control/factors/MOM-001/metrics -> 200
+     status=PARTIAL ic=-0.00591 rank_ic=-0.02932 qualification.qualified=false
+GET /api/admin/bias-control/qualification -> 200
+     summary={total:98,evaluated:1,qualified:0,unqualified:1,not_evaluated:97}
+GET /api/admin/bias-control/correlation-matrix -> 200 factor_ids=['MOM-001']
+```
+
+**bias-control 页 — 六查批次（04 BiasControlService）**：
+```
+POST /api/factors/MOM-001/run-check -> 202 run_id=d44d36b02f69
+轮询 GET /api/admin/bias-control/runs/d44d36b02f69（3s 间隔）
+  -> status PASS, progress={completed:1,total:1,passed:1,failed:0}
+GET /api/admin/bias-control/factors/MOM-001 -> 200 overall=PASS
+  checks={lookahead:PASS, full_sample:PASS, multiple_testing:PASS, overfit:PASS, cost:PASS}
+  oos=LOCKED（development scope 不跑样本外，与 04 语义一致）
+GET .../runs/d44d36b02f69/report?format=md|csv|json -> 200（439/193/5458 字节，04 生成）
+GET /api/admin/bias-control/overview -> summary={total:1,checked:1,pass:1,fail:0,...}
+检查状态：run-check 后 /api/factors/MOM-001/check-status -> {status:checked,source:auto}
+attest -> {checked, manual}；override PASS 项 -> 400（仅 FAIL/BLOCKED/ERROR 可解封，如实拒）；
+uncheck -> unchecked。
+```
+
+**上传 → 热插拔 → 热拔（02 通道）**：
+```
+POST /api/upload/factor（MD+impl 成对，UPL-001）
+  -> 200 validation.registered=True factor_id=UPL-001 errors=[]
+GET /api/factors/UPL-001/series?symbol=BTC/USDT&limit=3 -> 200 count=3（真实计算）
+DELETE /api/registry/factors/UPL-001 -> 200 deleted=True（文件移 imports/factor_trash/）
+GET /api/registry/factors -> UPL-001 消失、MOM-001 仍在
+DELETE /api/registry/factors/MOM-001 -> 403（内置因子不从 UI 下架，如实拒）
+（验后已清理 factor_trash；imports/ 恢复如初）
+```
+
+**策略回测（03 run_strategy）**：
+```
+POST /api/backtest/strategy {DEM-001, md, 2025-01-01→2025-03-01, 10000}
+  -> 200 total_return_pct=-25.48 final_equity=7452.41（Sharpe -1.06，真实计算）
+     txt 报告随行返回；positions/transactions 如实空数组（权重调仓无逐笔价）
+POST /api/backtest/factor -> 501（无 sim 因子买卖回测引擎，如实拒并指引替代）
+```
+
+**如实错误面（无服务不造假）**：/api/signals/rules -> 503；/api/cleaning/config -> 503；
+/api/pystrategies -> 200 空列表；/api/factors/export -> 200 xlsx 5110 字节；
+/api/factors/MOM-001/self-check-package -> 200 zip 2718 字节。
+
+### 反向验证（红→绿，Chrome 无头 DOM 取证）
+
+- **GREEN**（后端正常，`chrome --headless --dump-dom http://127.0.0.1:8000/`）：
+  DOM 含 `<span class="dot ok"></span>API 正常`；ECharts canvas 已渲染（canvas count: 1）。
+- **RED**（/api/state 不可达：用 python http.server 静态伺服 web/，/api/* 全部 404）：
+  DOM `<span id="health"><span class="dot err"></span>API 异常</span>`；
+  `#acc-equity` 等账户位保持 `--`——显示错误而非假数据。
+  前端代码路径：pollState catch → console.error('poll state failed') + setHealth(false)。
+- **闭环**：kill 服务进程后 `curl /api/state` -> 000 连接被拒绝（curl exit 7）。
+
+### 硬指标 2：四页与源逐字节比对
+
+```
+sha256sum 比对（源 = sim_platform-main/.../cryptopaperlab/web/）：
+index.html DIFF(3处) explorer.html DIFF(2处) bias-control.html DIFF(1处)
+about.html DIFF(1处) lab.png IDENTICAL
+diff 逐行输出 = 恰为 API_DIFF.md 记录的 7 处（3 处 API 路径避让 + 4 处
+display:none 隐藏策略工厂），无其他差异。
+```
+
+### pytest 与地界
+
+```
+.venv/Scripts/python.exe -m pytest tests/ -q -p no:cacheprovider
+381 passed, 1 warning in 41.43s        # = 基线 381 / 0 skipped
+
+git status --short（05 地界）：
+ M pyproject.toml / requirements.txt   # 各加 2 行依赖（python-multipart/openpyxl）
+ M run.py                              # 增强（mounts_to_tail/参数/autolive）
+?? src/superplatform_web/simserve.py / ma_overlays.py / routes/sim_*.py（8 个路由模块）
+?? web/                                 # 四页 + lab.png + API_DIFF.md
+?? PROGRESS_05.md / BLOCKED_05.md
+（config/default.yaml、runtime/cli.py、evaluation/* 是 04 地界，未碰）
+```
+
+未碰 tests/、01/02/03 地界源码；04 地界只 import 调用其服务；无 skip/todo/
+mock/|| true；未 commit（交总控）。
+
+## 留给后续/总控的备注
+
+- 04 联调状态：**已完成**。rating/leaderboard/metrics/qualification/
+  correlation-matrix/bias-check 全部经服务层接真（MOM-001 评级 S、开发集
+  指标、六查批次 PASS 均实测，见上）。无待联调端点。
+- UI 批次的六查按逐因子调 04 run（取消在因子间生效）；多重检验 BH 家族
+  因此是单因子家族（family_size=1），与 04 CLI 整批次家族口径不同，
+  结果 payload 内如实携带 family_size。
+- 相关性矩阵默认集收窄为已评估因子（口径见上方拍板与 BLOCKED_05.md #2）。
+- autolive 用合成价格源是离线环境的既定行为（同 03 CLI）；网络恢复后
+  手动 POST /api/live/start 会用真实 adapter（00 既有代码路径，未改）。
+- 运行 `python run.py` 即得完整演示：四页 200、K线/净值/持仓/评级/六查全真。
