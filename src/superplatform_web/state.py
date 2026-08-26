@@ -13,8 +13,8 @@ replacing the object would leave those imports pointing at a stale registry.
 
 from pathlib import Path
 
+from superplatform.data.provider_registry import DataProviderRegistry
 from superplatform.data.provider_registry import (
-    DataProviderRegistry,
     resolve_provider_for_data_type as _resolve_provider,
 )
 from superplatform.data.store import Store
@@ -156,7 +156,8 @@ def provider_label(provider_id: str) -> str:
     exchange = prov.exchange
     market = prov.market_type
     data_type = prov.data_type
-    label = _EXCHANGE_LABELS.get(exchange, exchange or provider_id)
+    exchange_key = exchange or provider_id
+    label = _EXCHANGE_LABELS.get(exchange_key, exchange_key)
     if market and market.value in _MARKET_LABELS:
         label += f" {_MARKET_LABELS[market.value]}"
     label += f" · {_DATA_TYPE_LABELS.get(data_type, data_type)}"
@@ -178,6 +179,7 @@ def resolve_provider_for_data_type(
     registry: DataProviderRegistry | None = None,
     *,
     disabled: set[str] | None = None,
+    allow_fallback: bool = True,
 ) -> str:
     """Resolve a provider matching (exchange, market, data_type).
 
@@ -188,4 +190,11 @@ def resolve_provider_for_data_type(
     reg = registry if registry is not None else providers
     if disabled is None:
         disabled = disabled_provider_ids()
-    return _resolve_provider(exchange, market, data_type, reg, disabled=disabled)
+    return _resolve_provider(
+        exchange,
+        market,
+        data_type,
+        reg,
+        disabled=disabled,
+        allow_fallback=allow_fallback,
+    )

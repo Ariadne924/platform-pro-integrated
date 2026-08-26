@@ -188,6 +188,14 @@ def test_resolve_provider_data_layer() -> None:
     assert resolve_provider_for_data_type(
         "kaiko", "perpetual", "kline", reg
     ) == "binance-perp-kline"
+    with pytest.raises(ValueError, match="No exact provider"):
+        resolve_provider_for_data_type(
+            "binance",
+            "spot",
+            "kline",
+            reg,
+            allow_fallback=False,
+        )
     with pytest.raises(ValueError):
         resolve_provider_for_data_type(
             "binance", "perpetual", "trade", reg

@@ -93,6 +93,8 @@
 
     /* Market panel */
     .market-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+    .kline-data-meta { color: var(--text-2); font-size: 11px; margin: -2px 0 6px; }
+    .kline-data-meta.warn { color: var(--warning); }
     .market-stats { display: flex; gap: 18px; margin-bottom: 8px; }
     .ma-toolbar {
       display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
@@ -404,6 +406,7 @@
             </select>
           </div>
         </div>
+        <div class="kline-data-meta" id="kline-data-meta">数据层：等待加载</div>
         <div class="ma-toolbar" id="ma-toolbar">
           <span class="ma-title">均线叠加</span>
           <!-- 复选框由 renderMAToolbar() 动态渲染 -->
@@ -768,6 +771,8 @@
       lastState: null,
       klineRange: '7y',
       klinePeriod: 'auto',
+      klineExchange: 'binance',
+      klineMarketType: 'perpetual',
       klineChart: null,
       equityChart: null,
       factorChart: null,
@@ -983,16 +988,36 @@
       loadKlines();
     }
 
+    function resolvedKlinePeriod() {
+      if (state.klinePeriod !== 'auto') return state.klinePeriod;
+      return { '7y': '1d', '1y': '4h', '1M': '1h', '1w': '1h', '1d': '1h' }[state.klineRange] || '1d';
+    }
+
     async function loadKlines() {
       try {
         const { start, end } = getKlineWindow();
-        const periodParam = state.klinePeriod === 'auto' ? '' : `&period=${encodeURIComponent(state.klinePeriod)}`;
-        const url = `/market/klines?symbol=${encodeURIComponent(state.selectedSymbol)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&limit=5000&ma=all${periodParam}`;
+        const period = resolvedKlinePeriod();
+        const warmupStart = new Date(new Date(start).getTime() - 83 * 86400000).toISOString();
+        const url = `/v1/market/klines?exchange=${encodeURIComponent(state.klineExchange)}` +
+          `&market_type=${encodeURIComponent(state.klineMarketType)}` +
+          `&symbol=${encodeURIComponent(state.selectedSymbol)}` +
+          `&frequency=${encodeURIComponent(period)}&layer=gold&ma=all` +
+          `&start=${encodeURIComponent(warmupStart)}&end=${encodeURIComponent(end)}&limit=5000`;
         const data = await api(url);
-        if (data.error) { console.error(data.error); return; }
-        const rows = data.data || [];
-        const period = data.period || state.klinePeriod;
-        const ma = data.ma || {};
+        const meta = data.meta || {};
+        const allRows = (data.data || []).map(row => ({ ...row, ts: row.open_time }));
+        const allMA = data.ma || {};
+        const visibleStart = allRows.findIndex(row => new Date(row.ts).getTime() >= new Date(start).getTime());
+        const offset = visibleStart < 0 ? allRows.length : visibleStart;
+        const rows = allRows.slice(offset);
+        const ma = Object.fromEntries(Object.entries(allMA).map(([key, values]) => [key, values.slice(offset)]));
+        const quality = meta.quality_summary || {};
+        const metaNode = $('#kline-data-meta');
+        const flagged = quality.flagged_bars || 0;
+        metaNode.classList.toggle('warn', flagged > 0 || meta.has_more);
+        metaNode.textContent = `${String(meta.exchange || '').toUpperCase()} · ${meta.market_type || ''} · ${String(meta.data_layer || '').toUpperCase()} · ` +
+          `${meta.source_frequency || period}→${meta.frequency || period} · ${meta.count || 0} 根 · ` +
+          `质量标记 ${flagged}${meta.has_more ? ' · 结果已截断' : ''}`;
         state._lastKlineRows = { rows, period, ma };
         renderKline(rows, period, false, ma);
       } catch (e) { console.error(e); }

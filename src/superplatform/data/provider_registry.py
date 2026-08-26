@@ -116,10 +116,11 @@ def resolve_provider_for_data_type(
     registry: DataProviderRegistry,
     *,
     disabled: set[str] | None = None,
+    allow_fallback: bool = True,
 ) -> str:
     """Find a provider id matching (exchange, market, data_type).
 
-    Resolution order:
+    Resolution order when ``allow_fallback`` is true:
     1. Exact match: exchange + market + data_type
     2. Same exchange + data_type (any market)
     3. Any provider serving data_type
@@ -142,6 +143,12 @@ def resolve_provider_for_data_type(
             and p_market_val == market_val
         ):
             return pid
+
+    if not allow_fallback:
+        raise ValueError(
+            f"No exact provider for data_type='{data_type}' exchange='{exchange}' "
+            f"market='{market_val}'"
+        )
 
     # Tier 2: same exchange + data_type, any market
     for pid in available:
