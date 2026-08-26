@@ -77,7 +77,9 @@ async def strategy_data_requirements(strategy_id: str) -> dict[str, Any]:
             missing.append(entry)
             continue
         entry["provider_id"] = provider_id
-        entry["source"] = "provider_cache"
+        entry["source"] = (
+            "provider_cache" if dep.data_type == "kline" else "provider_registry"
+        )
         entry["available"] = True
         resolved.append(entry)
     return {

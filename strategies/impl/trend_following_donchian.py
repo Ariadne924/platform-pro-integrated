@@ -29,6 +29,11 @@ STRATEGY_META: dict[str, Any] = {
     "timeframe": "4h signal / 1d engine",
     "symbols": ["BTC/USDT"],
     "long_only": False,
+    "execution_mode": "research_only",
+    "execution_warning": (
+        "信号使用现货 K 线但允许负仓位；普通现货账户不能直接做空，"
+        "接入实盘前必须配置保证金借币或独立的永续执行腿。"
+    ),
     "data_dependencies": {
         "BTC/USDT": {
             "instrument": "spot", "frequency": "4h",
@@ -85,7 +90,7 @@ def generate_positions(
     path = close.diff().abs().rolling(er_period).sum()
     er = (close - close.shift(er_period)).abs() / path.replace(0.0, np.nan)
 
-    states = np.zeros(len(bars), dtype=np.int8)
+    states: np.ndarray = np.zeros(len(bars), dtype=np.int8)
     current = 0
     for i in range(len(bars)):
         c, e = close.iloc[i], er.iloc[i]

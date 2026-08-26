@@ -18,6 +18,7 @@ from superplatform.strategy.data_dependencies import (
     StrategyDataDependency,
     align_dependency_groups,
     build_price_data,
+    dependency_instrument_id,
     fetch_strategy_data,
     parse_data_dependencies,
     resolve_dependency_provider,
@@ -216,6 +217,27 @@ def test_parse_data_dependencies_rejects_duplicate_id():
     assert any("重复" in e for e in errors)
 
 
+def test_parse_data_dependencies_rejects_mixed_alignment_in_one_group():
+    base = {
+        "exchange": "binance",
+        "market_type": "spot",
+        "data_type": "kline",
+        "frequency": "1d",
+        "layer": "gold",
+        "group": "pair",
+    }
+    meta = {
+        "data_dependencies": [
+            base | {"id": "btc", "symbol": "BTCUSDT", "align": "intersect"},
+            base | {"id": "eth", "symbol": "ETHUSDT", "align": "past"},
+        ]
+    }
+
+    _deps, errors = parse_data_dependencies(meta)
+
+    assert any("pair" in error and "align" in error for error in errors)
+
+
 # ── 精确 Provider 解析（禁止静默 fallback） ───────────────────────────
 
 
@@ -309,6 +331,53 @@ def test_fetch_strategy_data_funding_rate_uses_provider():
     entry = bundle["funding"]
     assert entry["meta"]["provider_id"] == "binance-funding-rate"
     assert "funding_rate" in entry["frame"].columns
+
+
+def test_fetch_strategy_data_rejects_missing_required_fields():
+    dep = StrategyDataDependency(
+        id="funding",
+        exchange="binance",
+        market_type=MarketType.PERPETUAL,
+        data_type="funding_rate",
+        symbol="BTCUSDT",
+        frequency=DataFrequency.D1,
+        required_fields=("funding_rate", "mark_price"),
+    )
+
+    with pytest.raises(ValueError, match="mark_price"):
+        asyncio.run(
+            fetch_strategy_data(
+                [dep], store=_Store(pd.DataFrame()), registry=_registry()
+            )
+        )
+
+
+def test_fetch_strategy_data_normalizes_naive_non_kline_index_to_utc():
+    class NaiveFundingProvider(_FundingProvider):
+        async def fetch(self, symbol, frequency, start=None, end=None, **kwargs):
+            return pd.DataFrame(
+                {"funding_rate": [0.0001]},
+                index=pd.DatetimeIndex(["2026-01-01"]),
+            )
+
+    registry = DataProviderRegistry()
+    registry.register(_SpotKlineProvider())
+    registry.register(NaiveFundingProvider())
+    dep = StrategyDataDependency(
+        id="funding",
+        exchange="binance",
+        market_type=MarketType.PERPETUAL,
+        data_type="funding_rate",
+        symbol="BTCUSDT",
+        frequency=DataFrequency.D1,
+        required_fields=("funding_rate",),
+    )
+
+    bundle = asyncio.run(
+        fetch_strategy_data([dep], store=_Store(pd.DataFrame()), registry=registry)
+    )
+
+    assert str(bundle["funding"]["frame"].index.tz) == "UTC"
 
 
 def test_fetch_strategy_data_gold_4h_from_1m():
@@ -415,3 +484,31 @@ def test_build_price_data_asof_no_lookahead():
     price_data = build_price_data(bundle, deps, signal_times)
     closes = price_data["BTCUSDT"]["close"].tolist()
     assert closes == [100.0, 110.0]
+
+
+def test_build_price_data_keeps_spot_and_perpetual_instruments_separate():
+    times = pd.DatetimeIndex(["2026-01-02T00:00:00Z"], tz="UTC")
+    frame = pd.DataFrame(
+        {"close_time": times, "close": [100.0]},
+        index=pd.DatetimeIndex(["2026-01-01T00:00:00Z"], tz="UTC"),
+    )
+    spot = _dep(id="spot_btc", frequency=DataFrequency.D1, layer=DataLayer.GOLD)
+    perp = _dep(
+        id="perp_btc",
+        market_type=MarketType.PERPETUAL,
+        frequency=DataFrequency.D1,
+        layer=DataLayer.GOLD,
+    )
+    bundle = {
+        "spot_btc": {"frame": frame.copy()},
+        "perp_btc": {"frame": frame.assign(close=101.0)},
+    }
+
+    price_data = build_price_data(bundle, [spot, perp], times)
+
+    assert set(price_data) == {
+        dependency_instrument_id(spot),
+        dependency_instrument_id(perp),
+    }
+    assert price_data[dependency_instrument_id(spot)]["close"].tolist() == [100.0]
+    assert price_data[dependency_instrument_id(perp)]["close"].tolist() == [101.0]

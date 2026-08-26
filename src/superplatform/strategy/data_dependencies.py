@@ -22,6 +22,7 @@ Provider（``allow_fallback=False``，禁止静默跨市场回退）后取数返
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -66,7 +67,7 @@ KLINE_FIELDS = (
     "close",
     "volume",
     "quote_volume",
-    "trades",
+    "trade_count",
     "taker_buy_volume",
 )
 
@@ -103,7 +104,23 @@ class StrategyDataDependency:
             "closed_only": self.closed_only,
             "group": self.group,
             "align": self.align,
+            "instrument_id": dependency_instrument_id(self),
         }
+
+
+def dependency_instrument_id(dep: StrategyDataDependency) -> str:
+    """Return the stable execution identity for one market instrument.
+
+    A core symbol alone is ambiguous across spot and derivatives.  The
+    exchange and market are therefore part of every execution/price key.
+    """
+    return ":".join(
+        (
+            dep.exchange.lower(),
+            dep.market_type.value,
+            _core_symbol(dep.symbol),
+        )
+    )
 
 
 # -------------------------------------------------------------------
@@ -141,6 +158,14 @@ def parse_data_dependencies(
             continue
         seen_ids.add(dep_id)
         deps.append(_build_dep(item))
+    group_rules: dict[str, set[str]] = {}
+    for dep in deps:
+        group_rules.setdefault(dep.group, set()).add(dep.align)
+    for group, rules in group_rules.items():
+        if len(rules) > 1:
+            errors.append(
+                f"data_dependencies group '{group}' 的 align 不一致: {sorted(rules)}"
+            )
     return deps, errors
 
 
@@ -278,7 +303,9 @@ async def fetch_strategy_data(
                 )
             )
             frame = page_to_frame(page, closed_only=dep.closed_only)
+            _validate_required_fields(dep, frame)
             meta = dict(page.meta)
+            meta["instrument_id"] = dependency_instrument_id(dep)
             meta["time_range"] = _time_range(frame)
             bundle[dep.id] = {"meta": meta, "frame": frame}
         else:
@@ -291,6 +318,7 @@ async def fetch_strategy_data(
                 limit=limit,
             )
             frame = _normalize_non_kline_frame(frame)
+            _validate_required_fields(dep, frame)
             bundle[dep.id] = {
                 "meta": {
                     "data_type": dep.data_type,
@@ -300,6 +328,7 @@ async def fetch_strategy_data(
                     "market_type": dep.market_type.value,
                     "symbol": _core_symbol(dep.symbol),
                     "frequency": dep.frequency.value,
+                    "instrument_id": dependency_instrument_id(dep),
                     "count": len(frame),
                     "time_range": _time_range(frame),
                 },
@@ -339,13 +368,33 @@ def page_to_frame(
 
 def _normalize_non_kline_frame(frame: pd.DataFrame) -> pd.DataFrame:
     result = frame.copy()
-    if not isinstance(result.index, pd.DatetimeIndex):
-        if "timestamp" in result.columns:
-            result.index = pd.DatetimeIndex(
-                pd.to_datetime(result["timestamp"], utc=True)
-            )
-            result.index.name = "timestamp"
+    if isinstance(result.index, pd.DatetimeIndex):
+        if result.index.tz is None:
+            result.index = result.index.tz_localize("UTC")
+        else:
+            result.index = result.index.tz_convert("UTC")
+        result.index.name = "timestamp"
+    elif "timestamp" in result.columns:
+        result.index = pd.DatetimeIndex(
+            pd.to_datetime(result["timestamp"], utc=True)
+        )
+        result.index.name = "timestamp"
+    elif result.empty:
+        result.index = pd.DatetimeIndex([], name="timestamp", tz="UTC")
+    else:
+        raise ValueError("Provider 数据缺少 timestamp 或 DatetimeIndex")
     return result
+
+
+def _validate_required_fields(
+    dep: StrategyDataDependency,
+    frame: pd.DataFrame,
+) -> None:
+    missing = sorted(set(dep.required_fields) - set(frame.columns))
+    if missing:
+        raise ValueError(
+            f"数据依赖 '{dep.id}' 缺少 required_fields: {missing}"
+        )
 
 
 def _time_range(frame: pd.DataFrame) -> dict[str, str | None]:
@@ -375,9 +424,10 @@ def align_dependency_groups(
         groups.setdefault(dep.group, {})[dep.id] = bundle[dep.id]["frame"]
     result: dict[str, pd.DataFrame] = {}
     for group, frames in groups.items():
-        align = next(
-            (d.align for d in deps if d.group == group), ALIGN_INTERSECT
-        )
+        rules = {d.align for d in deps if d.group == group}
+        if len(rules) > 1:
+            raise ValueError(f"数据依赖 group '{group}' 的 align 不一致: {sorted(rules)}")
+        align = next(iter(rules), ALIGN_INTERSECT)
         result[group] = align_dependency_frames(frames, align)
     return result
 
@@ -425,6 +475,8 @@ def build_price_data(
     的最近一根已闭合 K 线 close，杜绝用尚未闭合的桶（前视）。
     """
     price_data: dict[str, pd.DataFrame] = {}
+    kline_deps = [dep for dep in deps if dep.data_type == "kline"]
+    symbol_counts = Counter(_core_symbol(dep.symbol) for dep in kline_deps)
     for dep in deps:
         if dep.data_type != "kline":
             continue
@@ -441,7 +493,11 @@ def build_price_data(
         aligned = (
             closes.reindex(closes.index.union(times)).ffill().reindex(times)
         )
-        price_data[symbol] = pd.DataFrame(
+        prices = pd.DataFrame(
             {"timestamp": times, "close": aligned.to_numpy()}
         )
+        price_data[dependency_instrument_id(dep)] = prices
+        # Preserve the legacy core-symbol key only when it is unambiguous.
+        if symbol_counts[symbol] == 1:
+            price_data[symbol] = prices
     return price_data

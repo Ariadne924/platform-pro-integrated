@@ -435,6 +435,86 @@ def test_market_page_consumes_gold_kline_interface():
     assert "ma=all" in html
     assert "function computeClientMA" not in html
     assert 'id="kline-data-meta"' in html
+    assert "/market/tickers?exchange=" in html
+    assert "改用更大周期" in html
+
+
+def test_tickers_can_be_scoped_to_an_exact_market(monkeypatch):
+    from superplatform.data.enums import MarketType
+    from superplatform.data.provider_registry import DataProvider, DataProviderRegistry
+    from superplatform.runtime.config import Config
+    from superplatform_web import state
+    from superplatform_web.routes.sim_market import router
+
+    class SpotProvider(DataProvider):
+        provider_id = "binance-spot-kline"
+        data_type = "kline"
+        exchange = "binance"
+        market_type = MarketType.SPOT
+
+        async def fetch(self, *_args, **_kwargs):
+            return pd.DataFrame()
+
+    class MarketStore:
+        def __init__(self):
+            self.tables = []
+
+        def series_range(self, table, symbol, frequency):
+            self.tables.append(table)
+            count = int(
+                table == "pv_binance_spot_kline"
+                and symbol == "BTCUSDT"
+                and frequency == "1m"
+            )
+            return {"count": count}
+
+        def query_series(self, table, symbol, frequency, **_kwargs):
+            self.tables.append(table)
+            assert table == "pv_binance_spot_kline"
+            assert symbol == "BTCUSDT"
+            assert frequency == "1m"
+            return pd.DataFrame(
+                [
+                    {"timestamp": "2026-01-01T00:00:00Z", "close": 100.0},
+                    {"timestamp": "2026-01-02T00:00:00Z", "close": 110.0},
+                ]
+            )
+
+    registry = DataProviderRegistry()
+    registry.register(SpotProvider())
+    store = MarketStore()
+    monkeypatch.setattr(state, "providers", registry)
+    monkeypatch.setattr(state, "store", store)
+    monkeypatch.setattr(
+        state,
+        "config",
+        Config(
+            {
+                "defaults": {"exchange": "binance", "market": "perpetual"},
+                "data": {
+                    "symbols": {
+                        "spot": ["BTCUSDT"],
+                        "perpetual": ["ETHUSDT"],
+                    }
+                },
+            }
+        ),
+    )
+    app = FastAPI()
+    app.include_router(router)
+
+    response = TestClient(app).get(
+        "/api/market/tickers",
+        params={"exchange": "binance", "market_type": "spot"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["exchange"] == "binance"
+    assert payload["market_type"] == "spot"
+    assert list(payload["symbols"]) == ["BTC/USDT"]
+    assert payload["symbols"]["BTC/USDT"]["last_price"] == 110.0
+    assert set(store.tables) == {"pv_binance_spot_kline"}
 
 
 def test_bronze_kline_page_is_bounded_and_keeps_native_rows(monkeypatch):

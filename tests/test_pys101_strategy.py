@@ -55,6 +55,8 @@ def _bundle(frame: pd.DataFrame) -> dict:
 
 def test_pys101_generate_returns_signal_schema():
     mod = _load_pys101()
+    assert mod.STRATEGY_META["execution_mode"] == "research_only"
+    assert "现货" in mod.STRATEGY_META["execution_warning"]
     out = mod.generate(_bundle(_trend_frame(300)))
     assert list(out.columns) == ["timestamp", "symbol", "position"]
     assert (out["symbol"] == "BTCUSDT").all()

@@ -25,6 +25,16 @@ class _SpotKlineProvider(DataProvider):
         return pd.DataFrame()
 
 
+class _FundingProvider(DataProvider):
+    provider_id = "binance-perp-funding"
+    data_type = "funding_rate"
+    exchange = "binance"
+    market_type = MarketType.PERPETUAL
+
+    async def fetch(self, symbol, frequency, start=None, end=None, **kwargs):
+        return pd.DataFrame()
+
+
 class _Store:
     def query_series(self, table, symbol, frequency, **_kwargs):
         assert table == "pv_binance_spot_kline", table
@@ -103,6 +113,7 @@ def _client(monkeypatch, record=None, with_store=True):
 def _providers() -> DataProviderRegistry:
     registry = DataProviderRegistry()
     registry.register(_SpotKlineProvider())
+    registry.register(_FundingProvider())
     return registry
 
 
@@ -154,6 +165,28 @@ def test_data_requirements_reports_missing_when_no_exact_provider(monkeypatch):
     assert len(payload["missing"]) == 1
     assert payload["missing"][0]["id"] == "btc_perp"
     assert payload["missing"][0]["available"] is False
+
+
+def test_data_requirements_does_not_mislabel_provider_fetch_as_cache(monkeypatch):
+    record = _pys101_record()
+    record.data_dependencies = [
+        StrategyDataDependency(
+            id="funding",
+            exchange="binance",
+            market_type=MarketType.PERPETUAL,
+            data_type="funding_rate",
+            symbol="BTCUSDT",
+            frequency=DataFrequency.D1,
+        )
+    ]
+    client = _client(monkeypatch, record=record)
+
+    response = client.get("/api/v1/strategies/PYS-101/data-requirements")
+
+    assert response.status_code == 200
+    dependency = response.json()["dependencies"][0]
+    assert dependency["provider_id"] == "binance-perp-funding"
+    assert dependency["source"] == "provider_registry"
 
 
 def test_data_resolve_endpoint_returns_dataset_with_quality_meta(monkeypatch):

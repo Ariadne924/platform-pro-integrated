@@ -8,13 +8,15 @@ pandas resample（图表展示层聚合，非评估指标）；均线叠加见 m
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
 
-from superplatform_web import simserve
+from superplatform.data.enums import MarketType
+from superplatform.data.store import provider_table
+from superplatform_web import simserve, state
 from superplatform_web.ma_overlays import compute_ma_overlays, ma_lookback_bars
 
 router = APIRouter(prefix="/api/market", tags=["sim-market"])
@@ -96,10 +98,10 @@ def _resample(df: pd.DataFrame, rule: str) -> pd.DataFrame:
 async def klines(
     symbol: str = Query(..., description="交易对，如 BTC/USDT"),
     limit: int = Query(300, ge=1, le=5000),
-    start: Optional[str] = Query(None),
-    end: Optional[str] = Query(None),
+    start: str | None = Query(None),
+    end: str | None = Query(None),
     period: str = Query("1m"),
-    ma: Optional[str] = Query(None),
+    ma: str | None = Query(None),
 ) -> dict[str, Any]:
     """K 线数据（形状与 sim /api/market/klines 一致）。
 
@@ -117,7 +119,7 @@ async def klines(
     core = simserve.core_symbol(symbol)
     table = simserve.kline_table()
 
-    ma_keys: Optional[list[str]] = None
+    ma_keys: list[str] | None = None
     if ma and ma.strip().lower() != "all":
         ma_keys = [k.strip() for k in ma.split(",") if k.strip()]
 
@@ -157,7 +159,7 @@ async def klines(
             df_prefix = df_full.iloc[0:0]
             df_data = df_full
         if len(df_data) > limit:
-            keep = np.linspace(0, len(df_data) - 1, limit).astype(int)
+            keep: np.ndarray = np.linspace(0, len(df_data) - 1, limit).astype(int)
             df_data = df_data.iloc[keep]
         df = pd.concat([df_prefix, df_data]).reset_index(drop=True)
         prefix = len(df_prefix)
@@ -189,7 +191,7 @@ async def klines(
             "count": len(records), "data": records, "ma": ma_data}
 
 
-def _f(v: Any) -> Optional[float]:
+def _f(v: Any) -> float | None:
     try:
         f = float(v)
         return f if np.isfinite(f) else None
@@ -197,7 +199,7 @@ def _f(v: Any) -> Optional[float]:
         return None
 
 
-def _i(v: Any) -> Optional[int]:
+def _i(v: Any) -> int | None:
     try:
         f = float(v)
         return int(f) if np.isfinite(f) else None
@@ -205,8 +207,36 @@ def _i(v: Any) -> Optional[int]:
         return None
 
 
+def _exact_market_table(
+    exchange: str,
+    market_type: MarketType,
+    data_type: str,
+) -> str:
+    provider_id = state.resolve_provider_for_data_type(
+        exchange.lower(),
+        market_type.value,
+        data_type,
+        allow_fallback=False,
+    )
+    return provider_table(provider_id)
+
+
+def _optional_market_table(
+    exchange: str,
+    market_type: MarketType,
+    data_type: str,
+) -> str | None:
+    try:
+        return _exact_market_table(exchange, market_type, data_type)
+    except ValueError:
+        return None
+
+
 @router.get("/tickers")
-async def tickers() -> dict[str, Any]:
+async def tickers(
+    exchange: str | None = None,
+    market_type: MarketType | None = None,
+) -> dict[str, Any]:
     """各 symbol 最新行情快照：最新价、24h 涨跌、最新 funding、最新 OI。
 
     标的清单 = 研究池中缓存确有 1m K 线的标的（真实覆盖，不凭空列）。
@@ -215,11 +245,40 @@ async def tickers() -> dict[str, Any]:
     if store is None:
         raise HTTPException(status_code=503, detail="数据缓存未启用（data.cache.enabled=false）")
 
+    if (exchange is None) != (market_type is None):
+        raise HTTPException(
+            status_code=422,
+            detail="exchange 与 market_type 必须同时提供",
+        )
+
+    if exchange is not None and market_type is not None:
+        try:
+            kline_table = _exact_market_table(exchange, market_type, "kline")
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        funding_table = _optional_market_table(exchange, market_type, "funding_rate")
+        oi_table = _optional_market_table(exchange, market_type, "open_interest")
+        candidates = state.config.get(f"data.symbols.{market_type.value}") or []
+        symbols = []
+        for raw_symbol in candidates:
+            core = simserve.core_symbol(str(raw_symbol))
+            try:
+                info = store.series_range(kline_table, core, "1m")
+            except Exception:
+                continue
+            if info.get("count", 0) > 0:
+                symbols.append(core)
+    else:
+        kline_table = simserve.kline_table()
+        funding_table = simserve.funding_table()
+        oi_table = simserve.oi_table()
+        symbols = simserve.cached_kline_symbols("1m")
+
     result: dict[str, Any] = {}
-    for core in simserve.cached_kline_symbols("1m"):
+    for core in symbols:
         row: dict[str, Any] = {"symbol": simserve.ui_symbol(core)}
         recent = store.query_series(
-            simserve.kline_table(), core, "1m", limit=1441, order="DESC"
+            kline_table, core, "1m", limit=1441, order="DESC"
         )
         if not recent.empty:
             recent = recent.sort_values("timestamp")
@@ -234,10 +293,26 @@ async def tickers() -> dict[str, Any]:
         else:
             row.update({"last_price": None, "last_ts": None, "change_24h_pct": None})
 
-        fr = store.query_series(simserve.funding_table(), core, "8h", limit=1, order="DESC")
+        fr = (
+            store.query_series(funding_table, core, "8h", limit=1, order="DESC")
+            if funding_table is not None
+            else pd.DataFrame()
+        )
         row["funding_rate"] = float(fr["funding_rate"].iloc[0]) if not fr.empty else None
-        oi = store.query_series(simserve.oi_table(), core, "1d", limit=1, order="DESC")
+        oi = (
+            store.query_series(oi_table, core, "1d", limit=1, order="DESC")
+            if oi_table is not None
+            else pd.DataFrame()
+        )
         row["open_interest"] = float(oi["open_interest"].iloc[0]) if not oi.empty else None
         result[simserve.ui_symbol(core)] = row
 
-    return {"symbols": result, "count": len(result)}
+    payload: dict[str, Any] = {"symbols": result, "count": len(result)}
+    if exchange is not None and market_type is not None:
+        payload.update(
+            {
+                "exchange": exchange.lower(),
+                "market_type": market_type.value,
+            }
+        )
+    return payload

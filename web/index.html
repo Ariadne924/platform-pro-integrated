@@ -940,7 +940,9 @@
     // -------------------- Market --------------------
     async function loadTickers(forceRebuild = false) {
       try {
-        const data = await api('/market/tickers');
+        const tickerUrl = `/market/tickers?exchange=${encodeURIComponent(state.klineExchange)}` +
+          `&market_type=${encodeURIComponent(state.klineMarketType)}`;
+        const data = await api(tickerUrl);
         renderTickers(data.symbols || {});
         // build symbol selector if empty（forceRebuild 且取到标的时强制重建）
         const sel = $('#symbol-select');
@@ -1016,11 +1018,15 @@
       if (mtSel) mtSel.value = state.klineMarketType;
     }
 
-    function onKlineMarketChange() {
+    async function onKlineMarketChange() {
       state.klineExchange = $('#kline-exchange').value;
       state.klineMarketType = $('#kline-market-type').value;
-      loadTickers(true);   // 按新市场重建标的（取不到标的则不覆盖现有选项）
-      loadKlines();
+      await loadTickers(true);
+      const symbolSelect = $('#symbol-select');
+      if (symbolSelect && symbolSelect.value) {
+        state.selectedSymbol = symbolSelect.value;
+      }
+      await loadKlines();
     }
 
     function showKlineError(e) {
@@ -1075,7 +1081,7 @@
         if (hasMoreNode) {
           if (meta.has_more) {
             hasMoreNode.style.display = '';
-            hasMoreNode.textContent = `⚠ 数据较多，仅展示最近 ${meta.count || 0} 根（已截断）；请缩短时间范围或改用更小周期`;
+            hasMoreNode.textContent = `⚠ 数据较多，仅展示最近 ${meta.count || 0} 根（已截断）；请缩短时间范围或改用更大周期`;
           } else {
             hasMoreNode.style.display = 'none';
           }
