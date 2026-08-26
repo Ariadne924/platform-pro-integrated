@@ -44,9 +44,28 @@ from superplatform.factors.resolve import (
 from superplatform.runtime.config import Config
 from superplatform.runtime.consistency import check_consistency
 from superplatform.runtime.providers import default_provider_for
+from superplatform.strategy.data_dependencies import (
+    build_price_data,
+    fetch_strategy_data,
+)
 from superplatform.strategy.registry import StrategyRegistry
 from superplatform.utils.logging import logger
 from superplatform.visualization.reports import FactorDashboard, FactorReport
+
+# 数据依赖模式取数页大小：回测需覆盖多年 K 线，远超交互接口的 5000 上限
+_DATA_MODE_KLINE_LIMIT = 200_000
+
+
+def _as_utc(value: Any) -> pd.Timestamp | None:
+    """把配置里的字符串/时间戳统一成 UTC pd.Timestamp。"""
+    if value is None:
+        return None
+    timestamp = pd.Timestamp(value)
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.tz_localize("UTC")
+    else:
+        timestamp = timestamp.tz_convert("UTC")
+    return timestamp
 
 ProgressFn = Callable[[dict], None]
 
@@ -285,9 +304,11 @@ class OfflineRuntime:
         progress: ProgressFn | None = None,
         *,
         dual_factor_defaults: dict | None = None,
+        store: Any | None = None,
     ):
         self.config = config
         self.providers = provider_registry
+        self.store = store
         self.factors = FactorRegistry.get_instance()
         self.factors.auto_discover()
         FactorInstanceRegistry.get_instance().build_from_config(self.config, self.factors)
@@ -1025,6 +1046,9 @@ class OfflineRuntime:
         strategy_name: str,
         output_dir: str = "reports",
         consumer: ConsumerConfig | None = None,
+        *,
+        sample_start: str | None = None,
+        sample_end: str | None = None,
     ) -> dict:
         if consumer is None:
             consumer = ConsumerConfig.backtest()
@@ -1036,6 +1060,18 @@ class OfflineRuntime:
         # 不走 decorator 通道的实例治理）。
         strategy, used_factors, is_dual = resolve_strategy_ex(strategy_name)
         logger.info(f"Running strategy: {strategy_name} (consumer={consumer.consumer_id})")
+
+        # 数据依赖模式：策略显式声明 data_dependencies（且不消费因子）时，
+        # 走“解析数据 → 对齐 → generate(bundle)”的并行分支，与因子通道并存。
+        data_dependencies = getattr(strategy, "data_dependencies", None) or []
+        if data_dependencies and not used_factors:
+            return await self._run_data_strategy(
+                strategy,
+                data_dependencies,
+                consumer,
+                sample_start=sample_start,
+                sample_end=sample_end,
+            )
 
         if not is_dual:
             validate_used_factors_are_instances(used_factors)
@@ -1122,6 +1158,62 @@ class OfflineRuntime:
             f"WinRate: {bt.win_rate:.2%}"
         )
         return {"signal": signal, "backtest": bt, "factor_results": all_factor_results}
+
+    # ── Data-dependency strategy mode ───────────────────────────────
+
+    async def _run_data_strategy(
+        self,
+        strategy: Any,
+        data_dependencies: list[Any],
+        consumer: ConsumerConfig,
+        *,
+        sample_start: str | None = None,
+        sample_end: str | None = None,
+    ) -> dict:
+        """数据依赖模式：解析数据依赖集合 → generate(bundle) → 统一回测。
+
+        - 只消费已闭合 K 线（分层管线 closed_only）；
+        - 回测价格按信号时刻 as-of 对齐（close_time <= 时刻），杜绝前视；
+        - 成本/滑点/风控全部交给统一回测引擎。
+        """
+        from superplatform.runtime.dual import periods_per_year
+
+        if self.store is None:
+            raise ValueError(
+                "策略声明了 data_dependencies，但运行环境没有提供数据缓存 "
+                "（store）——请通过 web 路径或提供 DuckDB store 运行"
+            )
+        start = sample_start or self.config.get("evaluation.sample_start")
+        end = sample_end or self.config.get("evaluation.sample_end")
+        bundle = await fetch_strategy_data(
+            data_dependencies,
+            store=self.store,
+            registry=self.providers,
+            start=_as_utc(start),
+            end=_as_utc(end),
+            limit=_DATA_MODE_KLINE_LIMIT,
+        )
+        signal = strategy.generate_signals(bundle)
+        signal.positions.attrs["strategy_name"] = signal.name
+        logger.info(f"  [data-mode] Signal rows: {len(signal.positions)}")
+
+        signal_times = pd.DatetimeIndex(
+            pd.to_datetime(signal.positions["timestamp"], utc=True)
+        )
+        price_data = build_price_data(bundle, data_dependencies, signal_times)
+        cost_cfg = self.config.get("evaluation.cost") or {}
+        engine_frequency = getattr(strategy, "engine_frequency", None)
+        bt = backtest(
+            signal.positions,
+            price_data,
+            periods_per_year=periods_per_year(engine_frequency),
+            taker_fee_bps=float(cost_cfg.get("taker_fee_bps", 0.0)),
+            slippage_bps=float(cost_cfg.get("slippage_bps", 0.0)),
+        )
+        logger.info(
+            f"  [data-mode] Sharpe: {bt.sharpe:.2f}, MaxDD: {bt.max_drawdown:.2%}"
+        )
+        return {"signal": signal, "backtest": bt, "factor_results": {}}
 
     # ── Dashboard ───────────────────────────────────────────────────
 

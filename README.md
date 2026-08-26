@@ -46,6 +46,19 @@ console script 安装：`pip install -e . --no-deps`（pyproject 已声明 `supe
 K 线数据采用 Bronze/Silver/Gold 单向分层，版本化接口、质量标记和转换血缘见
 [`docs/K线数据分层与接口.md`](docs/K线数据分层与接口.md)。
 
+策略可在 MD frontmatter 显式声明数据依赖（`data_dependencies`），平台据此
+一次解析策略的全部数据集合，见
+[`docs/策略数据依赖与接口.md`](docs/策略数据依赖与接口.md)：
+
+```http
+GET  /api/v1/strategies/{strategy_id}/data-requirements   # 声明 + 精确 Provider 解析
+POST /api/v1/strategies/{strategy_id}/data/resolve        # 一次解析多数据依赖集合
+```
+
+内置数据依赖策略：`strategies/PYS-101_trend_following.md`（Binance spot
+BTCUSDT，Gold 4h 趋势跟踪），可直接 `superplatform backtest --strategy PYS-101`
+或 Web 触发回测。
+
 格式规范：[`docs/因子格式说明.md`](docs/因子格式说明.md)、[`docs/策略格式说明.md`](docs/策略格式说明.md)（含校验规则一览与最小示例）。`factors/TEMPLATE.md`、`strategies/TEMPLATE.md` 是协议权威模板。一个插件 = 一份 MD（唯一事实来源）+ 一个 impl .py：
 
 - 因子 impl：`compute(data: dict[data_type, dict[symbol, DataFrame]], **params) -> FactorResult`，`FactorResult.values` 含 `timestamp/value` 两列。

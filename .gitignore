@@ -16,3 +16,4 @@ reports/
 task/
 # 本地测试与诊断临时目录
 /work/
+.pytest-basetemp/

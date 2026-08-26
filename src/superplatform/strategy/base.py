@@ -31,6 +31,10 @@ class Strategy(ABC):
     name: str
     description: str = ""
     used_factors: list[str] = field(default_factory=list)
+    # 数据依赖策略：显式声明数据需求（MD frontmatter data_dependencies），
+    # 与 used_factors 二选一；为空表示传统因子通道。
+    data_dependencies: list = field(default_factory=list)
+    engine_frequency: str | None = None
 
     @abstractmethod
     def generate_signals(

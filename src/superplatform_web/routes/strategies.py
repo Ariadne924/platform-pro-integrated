@@ -14,6 +14,7 @@ from superplatform.runtime.pipeline import OfflineRuntime
 from superplatform.runtime.providers import default_provider_for
 from superplatform.strategy.registry import StrategyRegistry
 from superplatform_web import factor_config as fc
+from superplatform_web import state as _state
 from superplatform_web.state import (
     config,
     disabled_provider_ids,
@@ -149,8 +150,17 @@ async def backtest(data: dict):
             "end": sample_end,
         }
 
-    runtime = OfflineRuntime(temp, providers)
-    result = await runtime.run_strategy(strategy_name, consumer=ConsumerConfig.backtest())
+    runtime = OfflineRuntime(
+        temp,
+        providers,
+        store=_state.store,
+    )
+    result = await runtime.run_strategy(
+        strategy_name,
+        consumer=ConsumerConfig.backtest(),
+        sample_start=sample_start,
+        sample_end=sample_end,
+    )
 
     bt = result["backtest"]
     signal = result["signal"]

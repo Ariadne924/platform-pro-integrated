@@ -20,15 +20,17 @@ from __future__ import annotations
 
 import logging
 import threading
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 import pandas as pd
 
 from superplatform.strategy import protocol
 from superplatform.strategy.base import Strategy, StrategySignal
+from superplatform.strategy.data_dependencies import parse_data_dependencies
 from superplatform.strategy.protocol import ValidationIssue
 from superplatform.strategy.registry import StrategyRegistry
 from superplatform.strategy.signal_schema import SignalSchema
@@ -59,9 +61,12 @@ class DualStrategyRecord:
     impl_path: Path
     source: str                         # builtin / imports
     entry: str = "generate"
-    author: Optional[str] = None
-    generate_fn: Optional[Callable] = None
-    registered_ts: Optional[datetime] = None
+    author: str | None = None
+    generate_fn: Callable | None = None
+    registered_ts: datetime | None = None
+    # 数据依赖策略（可选）：显式声明数据需求；为空表示传统因子通道
+    data_dependencies: list[Any] = field(default_factory=list)
+    engine_frequency: str | None = None
 
 
 @dataclass
@@ -115,6 +120,8 @@ def _build_strategy(rec: DualStrategyRecord) -> Strategy:
             "name": strategy_id,
             "description": f"双文件策略 {strategy_id} ({rec.name})，MD: {rec.md_path.name}",
             "used_factors": [],
+            "data_dependencies": list(rec.data_dependencies),
+            "engine_frequency": rec.engine_frequency,
         },
     )
     return cls()
@@ -127,7 +134,7 @@ class DualStrategyRegistry:
     `StrategyRegistry.get_instance()`，与 decorator 策略走同一条消费路径。
     """
 
-    _instance: Optional["DualStrategyRegistry"] = None
+    _instance: DualStrategyRegistry | None = None
     _instance_lock = threading.Lock()
 
     def __init__(
@@ -153,7 +160,7 @@ class DualStrategyRegistry:
         self._scanned = False
 
     @classmethod
-    def get_instance(cls) -> "DualStrategyRegistry":
+    def get_instance(cls) -> DualStrategyRegistry:
         if cls._instance is None:
             with cls._instance_lock:
                 if cls._instance is None:
@@ -300,7 +307,7 @@ class DualStrategyRegistry:
     # ---------------------------------------------------------------
     # 查询接口
     # ---------------------------------------------------------------
-    def get_record(self, strategy_id: str) -> Optional[DualStrategyRecord]:
+    def get_record(self, strategy_id: str) -> DualStrategyRecord | None:
         with self._lock:
             return self._strategies.get(strategy_id)
 
@@ -410,6 +417,18 @@ class DualStrategyRegistry:
         meta = doc.meta
         strategy_id = str(meta["strategy_id"])
 
+        # 规则 11（可选字段）：data_dependencies 声明不合规则不注册
+        data_deps, data_dep_errors = parse_data_dependencies(meta)
+        if data_dep_errors:
+            self._failed[str(md_path)] = FailedRecord(
+                md_path=md_path,
+                source=source,
+                issues=[ValidationIssue(
+                    11, "data_dependencies", "; ".join(data_dep_errors),
+                )],
+            )
+            return
+
         # 同 source 重复 ID（规则 3 已被 seen_ids 拦住），防御性兜底
         existing = self._strategies.get(strategy_id)
         if existing is not None and existing.md_path != md_path:
@@ -443,6 +462,10 @@ class DualStrategyRegistry:
             generate_fn=generate_fn,
             registered_ts=datetime.now(timezone.utc),
             author=meta.get("author"),
+            data_dependencies=data_deps,
+            engine_frequency=(
+                str(meta["engine_frequency"]) if meta.get("engine_frequency") else None
+            ),
         )
         self._strategies[strategy_id] = rec
         seen_ids.add(strategy_id)
@@ -474,7 +497,7 @@ class DualStrategyRegistry:
             dirty = True
         return dirty
 
-    def _find_by_md(self, md_path: Path) -> Optional[DualStrategyRecord]:
+    def _find_by_md(self, md_path: Path) -> DualStrategyRecord | None:
         for rec in self._strategies.values():
             if rec.md_path == md_path:
                 return rec

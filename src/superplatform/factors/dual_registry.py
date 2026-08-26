@@ -20,10 +20,11 @@ from __future__ import annotations
 
 import logging
 import threading
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 import pandas as pd
 
@@ -85,9 +86,9 @@ class DualFactorRecord:
     impl_path: Path
     source: str                         # builtin / imports
     entry: str = "compute"
-    author: Optional[str] = None
-    compute_fn: Optional[Callable] = None
-    registered_ts: Optional[datetime] = None
+    author: str | None = None
+    compute_fn: Callable | None = None
+    registered_ts: datetime | None = None
 
 
 @dataclass
@@ -154,6 +155,9 @@ def _build_factor(rec: DualFactorRecord) -> Factor:
             "version": rec.version,
             "required_data": required_data,
             "required_symbols": None,
+            # 双文件因子的可编辑参数 schema 未在 MD 中声明；显式置空 dict，
+            # 避免继承基类裸 dataclasses.Field 导致 /api/factors 序列化失败
+            "params_schema": {},
         },
     )
     return cls()
@@ -167,7 +171,7 @@ class DualFactorRegistry:
     decorator 因子走同一条消费路径。
     """
 
-    _instance: Optional["DualFactorRegistry"] = None
+    _instance: DualFactorRegistry | None = None
     _instance_lock = threading.Lock()
 
     def __init__(
@@ -193,7 +197,7 @@ class DualFactorRegistry:
         self._scanned = False
 
     @classmethod
-    def get_instance(cls) -> "DualFactorRegistry":
+    def get_instance(cls) -> DualFactorRegistry:
         if cls._instance is None:
             with cls._instance_lock:
                 if cls._instance is None:
@@ -343,7 +347,7 @@ class DualFactorRegistry:
     # ---------------------------------------------------------------
     # 查询接口
     # ---------------------------------------------------------------
-    def get_record(self, factor_id: str) -> Optional[DualFactorRecord]:
+    def get_record(self, factor_id: str) -> DualFactorRecord | None:
         with self._lock:
             return self._factors.get(factor_id)
 
@@ -521,7 +525,7 @@ class DualFactorRegistry:
             dirty = True
         return dirty
 
-    def _find_by_md(self, md_path: Path) -> Optional[DualFactorRecord]:
+    def _find_by_md(self, md_path: Path) -> DualFactorRecord | None:
         for rec in self._factors.values():
             if rec.md_path == md_path:
                 return rec

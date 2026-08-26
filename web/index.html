@@ -95,6 +95,7 @@
     .market-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
     .kline-data-meta { color: var(--text-2); font-size: 11px; margin: -2px 0 6px; }
     .kline-data-meta.warn { color: var(--warning); }
+    .kline-data-meta.err { color: #f6465d; font-weight: 600; }
     .market-stats { display: flex; gap: 18px; margin-bottom: 8px; }
     .ma-toolbar {
       display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
@@ -387,6 +388,8 @@
             <div class="stat"><span class="label">持仓量</span><span class="value mono" id="stat-oi">--</span></div>
           </div>
           <div class="panel-actions">
+            <select id="kline-exchange" onchange="onKlineMarketChange()" title="交易所"></select>
+            <select id="kline-market-type" onchange="onKlineMarketChange()" title="市场类型"></select>
             <select id="kline-range" onchange="onKlineRangeChange()">
               <option value="7y" selected>7 年</option>
               <option value="1y">1 年</option>
@@ -407,6 +410,8 @@
           </div>
         </div>
         <div class="kline-data-meta" id="kline-data-meta">数据层：等待加载</div>
+        <div class="kline-data-meta err" id="kline-error" style="display:none"></div>
+        <div class="kline-data-meta warn" id="kline-has-more" style="display:none"></div>
         <div class="ma-toolbar" id="ma-toolbar">
           <span class="ma-title">均线叠加</span>
           <!-- 复选框由 renderMAToolbar() 动态渲染 -->
@@ -933,14 +938,15 @@
     }
 
     // -------------------- Market --------------------
-    async function loadTickers() {
+    async function loadTickers(forceRebuild = false) {
       try {
         const data = await api('/market/tickers');
         renderTickers(data.symbols || {});
-        // build symbol selector if empty
+        // build symbol selector if empty（forceRebuild 且取到标的时强制重建）
         const sel = $('#symbol-select');
-        if (!sel.options.length) {
-          const syms = Object.keys(data.symbols || {});
+        const syms = Object.keys(data.symbols || {});
+        if ((forceRebuild && syms.length) || !sel.options.length) {
+          sel.innerHTML = '';
           syms.forEach(sym => { const o = document.createElement('option'); o.value = sym; o.textContent = sym; sel.appendChild(o); });
           state.symbols = syms;
           if (syms.includes(state.selectedSymbol)) sel.value = state.selectedSymbol;
@@ -988,12 +994,56 @@
       loadKlines();
     }
 
+    // 交易所 / 市场类型选择器（替代永久硬编码的 binance / perpetual）
+    function populateKlineMarketSelectors() {
+      const exSel = $('#kline-exchange');
+      if (exSel && !exSel.options.length) {
+        [['binance', 'Binance'], ['synthetic', 'Synthetic'], ['okx', 'OKX'], ['bybit', 'Bybit']].forEach(([v, label]) => {
+          const o = document.createElement('option');
+          o.value = v; o.textContent = label;
+          exSel.appendChild(o);
+        });
+      }
+      if (exSel) exSel.value = state.klineExchange;
+      const mtSel = $('#kline-market-type');
+      if (mtSel && !mtSel.options.length) {
+        [['perpetual', '永续合约'], ['spot', '现货'], ['coin_futures', '币本位合约']].forEach(([v, label]) => {
+          const o = document.createElement('option');
+          o.value = v; o.textContent = label;
+          mtSel.appendChild(o);
+        });
+      }
+      if (mtSel) mtSel.value = state.klineMarketType;
+    }
+
+    function onKlineMarketChange() {
+      state.klineExchange = $('#kline-exchange').value;
+      state.klineMarketType = $('#kline-market-type').value;
+      loadTickers(true);   // 按新市场重建标的（取不到标的则不覆盖现有选项）
+      loadKlines();
+    }
+
+    function showKlineError(e) {
+      const node = $('#kline-error');
+      if (!node) return;
+      node.style.display = '';
+      node.textContent = `K线请求失败: ${(e && e.message) ? e.message : String(e)}`;
+    }
+
+    function clearKlineError() {
+      const node = $('#kline-error');
+      if (!node) return;
+      node.style.display = 'none';
+      node.textContent = '';
+    }
+
     function resolvedKlinePeriod() {
       if (state.klinePeriod !== 'auto') return state.klinePeriod;
       return { '7y': '1d', '1y': '4h', '1M': '1h', '1w': '1h', '1d': '1h' }[state.klineRange] || '1d';
     }
 
     async function loadKlines() {
+      clearKlineError();
       try {
         const { start, end } = getKlineWindow();
         const period = resolvedKlinePeriod();
@@ -1014,13 +1064,32 @@
         const quality = meta.quality_summary || {};
         const metaNode = $('#kline-data-meta');
         const flagged = quality.flagged_bars || 0;
-        metaNode.classList.toggle('warn', flagged > 0 || meta.has_more);
-        metaNode.textContent = `${String(meta.exchange || '').toUpperCase()} · ${meta.market_type || ''} · ${String(meta.data_layer || '').toUpperCase()} · ` +
+        metaNode.classList.toggle('warn', flagged > 0);
+        metaNode.textContent = `${String(meta.exchange || '').toUpperCase()} · ${marketLabel(meta.market_type || state.klineMarketType)} · ` +
+          `数据层 ${String(meta.data_layer || '').toUpperCase()} · ` +
+          `Provider ${meta.provider_id || '--'} · ` +
           `${meta.source_frequency || period}→${meta.frequency || period} · ${meta.count || 0} 根 · ` +
-          `质量标记 ${flagged}${meta.has_more ? ' · 结果已截断' : ''}`;
+          `质量标记 ${flagged}`;
+        // has_more 明确提示
+        const hasMoreNode = $('#kline-has-more');
+        if (hasMoreNode) {
+          if (meta.has_more) {
+            hasMoreNode.style.display = '';
+            hasMoreNode.textContent = `⚠ 数据较多，仅展示最近 ${meta.count || 0} 根（已截断）；请缩短时间范围或改用更小周期`;
+          } else {
+            hasMoreNode.style.display = 'none';
+          }
+        }
         state._lastKlineRows = { rows, period, ma };
         renderKline(rows, period, false, ma);
-      } catch (e) { console.error(e); }
+      } catch (e) {
+        showKlineError(e);
+        console.error(e);
+      }
+    }
+
+    function marketLabel(mt) {
+      return ({ perpetual: '永续', spot: '现货', coin_futures: '币本位' })[mt] || mt;
     }
 
     function renderKline(rows, period, preserveZoom, ma) {
@@ -2165,6 +2234,7 @@
       // 最多 15 秒后无论如何关闭 loading modal，避免 API 长时间不通时卡死
       setTimeout(hideLoadingModal, 15000);
       renderMAToolbar();
+      populateKlineMarketSelectors();
       await refreshAll();
       await loadOrders();
       await loadTrades();
