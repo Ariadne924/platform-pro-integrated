@@ -57,10 +57,16 @@ _DATA_MODE_KLINE_LIMIT = 200_000
 
 
 def _as_utc(value: Any) -> pd.Timestamp | None:
-    """把配置里的字符串/时间戳统一成 UTC pd.Timestamp。"""
+    """把配置里的字符串/时间戳统一成 UTC pd.Timestamp。
+
+    非法输入抛 ``ValueError``（调用方/路由据此返回 422）。
+    """
     if value is None:
         return None
-    timestamp = pd.Timestamp(value)
+    try:
+        timestamp = pd.Timestamp(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"无效时间参数: {value!r}") from exc
     if timestamp.tzinfo is None:
         timestamp = timestamp.tz_localize("UTC")
     else:

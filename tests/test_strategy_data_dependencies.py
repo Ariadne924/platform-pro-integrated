@@ -164,6 +164,58 @@ def test_parse_data_dependencies_rejects_bad_market_type():
     assert any("market_type" in e for e in errors)
 
 
+def test_parse_data_dependencies_rejects_unsupported_kline_frequency():
+    # 8h 是合法 DataFrequency，但分层管线不服务 → 注册时即拦截
+    meta = {
+        "data_dependencies": [
+            {
+                "id": "btc_8h", "exchange": "binance", "market_type": "spot",
+                "data_type": "kline", "symbol": "BTCUSDT", "frequency": "8h",
+                "layer": "gold",
+            }
+        ]
+    }
+    deps, errors = parse_data_dependencies(meta)
+    assert deps == []
+    assert any("8h" in e or "周期" in e for e in errors)
+
+
+def test_parse_data_dependencies_rejects_non_native_layer_frequency():
+    # 4h 派生周期配 silver 层不可服务
+    meta = {
+        "data_dependencies": [
+            {
+                "id": "btc_4h", "exchange": "binance", "market_type": "spot",
+                "data_type": "kline", "symbol": "BTCUSDT", "frequency": "4h",
+                "layer": "silver",
+            }
+        ]
+    }
+    deps, errors = parse_data_dependencies(meta)
+    assert deps == []
+    assert any("原生" in e for e in errors)
+
+
+def test_parse_data_dependencies_rejects_duplicate_id():
+    meta = {
+        "data_dependencies": [
+            {
+                "id": "btc_4h", "exchange": "binance", "market_type": "spot",
+                "data_type": "kline", "symbol": "BTCUSDT", "frequency": "4h",
+                "layer": "gold",
+            },
+            {
+                "id": "btc_4h", "exchange": "binance", "market_type": "spot",
+                "data_type": "kline", "symbol": "ETHUSDT", "frequency": "4h",
+                "layer": "gold",
+            },
+        ]
+    }
+    deps, errors = parse_data_dependencies(meta)
+    assert len(deps) == 1
+    assert any("重复" in e for e in errors)
+
+
 # ── 精确 Provider 解析（禁止静默 fallback） ───────────────────────────
 
 
@@ -270,6 +322,30 @@ def test_fetch_strategy_data_gold_4h_from_1m():
     assert frame.index[0] == pd.Timestamp("2026-01-01T00:00:00", tz="UTC")
     assert frame["close"].iloc[0] == 101.0  # 4h 内最后一根 1m 的 close
     assert bundle["btc_1m"]["meta"]["transformations"][-1] == "resample:1m->4h"
+
+
+class _RecordingStore(_Store):
+    def __init__(self, frame: pd.DataFrame) -> None:
+        super().__init__(frame)
+        self.last_order: str | None = None
+
+    def query_series(self, table, symbol, frequency, **_kwargs):
+        self.last_order = _kwargs.get("order")
+        return super().query_series(table, symbol, frequency, **_kwargs)
+
+
+def test_fetch_strategy_data_end_only_reads_recent_bars():
+    # 只给 end（无 start）时应按 DESC 取最近数据，而不是返回最旧的一批
+    now = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    store = _RecordingStore(_one_minute_frame())
+    dep = _dep()
+    asyncio.run(
+        fetch_strategy_data(
+            [dep], store=store, registry=_registry(), now=now,
+            end=pd.Timestamp("2026-01-01T00:03:00Z"),
+        )
+    )
+    assert store.last_order == "DESC"
 
 
 # ── 对齐 ──────────────────────────────────────────────────────────────

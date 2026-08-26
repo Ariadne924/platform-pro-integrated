@@ -107,7 +107,9 @@ class KlineLayerPipeline:
             query.exchange.lower(), query.market_type.value, "kline"
         )
         source_frequency, resample_rule, multiplier = self._source_plan(query)
-        order = "ASC" if query.start is not None or query.end is not None else "DESC"
+        # 有 start 锚点时按 ASC 向前分页；只有 end（或都没有）时按 DESC
+        # 取最近 limit 根（文档契约：省略时读取最近数据）
+        order = "ASC" if query.start is not None else "DESC"
         frame = self._store.query_series(
             provider_table(provider_id),
             _core_symbol(query.symbol),
@@ -222,6 +224,22 @@ class KlineLayerPipeline:
                 "incomplete_bars": incomplete,
             },
         }
+
+
+def validate_kline_frequency(
+    frequency: DataFrequency,
+    layer: DataLayer | None,
+) -> str | None:
+    """校验 (frequency, layer) 组合是否可被分层管线服务。
+
+    返回 None 表示可服务；否则返回人类可读的错误描述。供策略数据依赖
+    声明校验复用，避免声明了管线无法服务的组合（注册时即拦截）。
+    """
+    if frequency not in _FREQUENCY_DELTA:
+        return f"不支持的 K 线周期: {frequency}"
+    if layer in {DataLayer.BRONZE, DataLayer.SILVER} and frequency not in _NATIVE_FREQUENCIES:
+        return f"{layer.value} 层只提供原生周期 1m/1d；派生周期请使用 gold 层"
+    return None
 
 
 def _core_symbol(symbol: str) -> str:

@@ -155,12 +155,15 @@ async def backtest(data: dict):
         providers,
         store=_state.store,
     )
-    result = await runtime.run_strategy(
-        strategy_name,
-        consumer=ConsumerConfig.backtest(),
-        sample_start=sample_start,
-        sample_end=sample_end,
-    )
+    try:
+        result = await runtime.run_strategy(
+            strategy_name,
+            consumer=ConsumerConfig.backtest(),
+            sample_start=sample_start,
+            sample_end=sample_end,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     bt = result["backtest"]
     signal = result["signal"]

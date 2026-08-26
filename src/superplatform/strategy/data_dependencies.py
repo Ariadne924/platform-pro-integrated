@@ -34,6 +34,7 @@ from superplatform.data.kline_layers import (
     KlineLayerPipeline,
     KlineQuery,
     _core_symbol,
+    validate_kline_frequency,
 )
 from superplatform.data.provider_registry import (
     DataProviderRegistry,
@@ -125,6 +126,7 @@ def parse_data_dependencies(
         return [], ["data_dependencies 必须是一个列表"]
     deps: list[StrategyDataDependency] = []
     errors: list[str] = []
+    seen_ids: set[str] = set()
     for i, item in enumerate(raw):
         if not isinstance(item, dict):
             errors.append(f"data_dependencies[{i}] 必须是对象")
@@ -133,6 +135,11 @@ def parse_data_dependencies(
         if issue:
             errors.append(issue)
             continue
+        dep_id = str(item["id"])
+        if dep_id in seen_ids:
+            errors.append(f"data_dependencies[{i}].id 重复: {dep_id}")
+            continue
+        seen_ids.add(dep_id)
         deps.append(_build_dep(item))
     return deps, errors
 
@@ -156,6 +163,12 @@ def _validate_dep(item: dict[str, Any], index: int) -> str | None:
             DataLayer(item["layer"])
         except ValueError:
             return f"{label}.layer 必须是 bronze/silver/gold"
+    if item["data_type"] == "kline":
+        freq = DataFrequency(item["frequency"])
+        layer = DataLayer(item["layer"]) if item.get("layer") else None
+        freq_err = validate_kline_frequency(freq, layer)
+        if freq_err:
+            return f"{label}. {freq_err}"
     if item.get("align") is not None and item["align"] not in ALIGN_RULES:
         return f"{label}.align 必须是 {list(ALIGN_RULES)}"
     fields = item.get("required_fields", [])
