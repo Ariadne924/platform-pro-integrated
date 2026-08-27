@@ -24,6 +24,7 @@ from superplatform_web.routes.factors import router as factors_router
 from superplatform_web.routes.introspect import router as introspect_router
 from superplatform_web.routes.live import router as live_router
 from superplatform_web.routes.market_v1 import router as market_v1_router
+from superplatform_web.routes.ml_v1 import router as ml_v1_router
 from superplatform_web.routes.strategies import router as strategies_router
 from superplatform_web.routes.strategy_data_v1 import router as strategy_data_v1_router
 from superplatform_web.routes.symbols import router as symbols_router
@@ -89,6 +90,7 @@ app.include_router(strategies_router)
 app.include_router(strategy_data_v1_router)
 app.include_router(live_router)
 app.include_router(market_v1_router)
+app.include_router(ml_v1_router)
 app.include_router(config_router)
 app.include_router(data_router)
 app.include_router(introspect_router)

@@ -1,12 +1,13 @@
 # superplatform
 
-本地量化平台：**exchangia 分层内核 + sim_platform 双文件热插拔协议 + 原生 JS/ECharts 四页 UI** 的合成体。数据从 2019 至今完整回填（币安 vision 归档），能研究（评估/评级/偏差控制六查），也能 10 秒起一个本地模拟盘。
+本地量化平台：**exchangia 分层内核 + sim_platform 双文件热插拔协议 + 原生 JS/ECharts 五页 UI** 的合成体。数据从 2019 至今完整回填（币安 vision 归档），能研究（评估/评级/偏差控制六查/机器学习滚动验证），也能 10 秒起一个本地模拟盘。
 
 - 数据层：Binance USDT-M 永续 + 现货，kline(1m/1d) + funding_rate + open_interest，DuckDB 缓存、增量回填、UTC 强校验。
 - 因子/策略：MD+impl 双文件协议（因子 12 条 / 策略 10 条校验），`imports/` 落文件 10 秒内热注册、删 MD 即注销；注册表 mtime 增量 diff，支撑数千因子。
 - 研究：IC/RankIC/ICIR/衰减/分层/换手 HTML 报告、前视硬门槛、S~D 评级 + 评级榜、偏差控制六查 + 合格判定，缓存按 (因子 × 数据版本) 键控。
+- 机器学习：Gold 因子面板、Expanding Walk-Forward（Purge/Embargo）、牛熊震荡状态评估、自动回测与风险优先评分；当前定位为研究框架，不直接实盘下单。
 - 交易：策略出仓位权重、消费层转订单；回测（Sharpe/MaxDD）、`live` 模拟盘（敞口 100% 封顶、反转拆单、超资金拒单）、Binance testnet（key 只读环境变量）。
-- UI：`/`（行情 K线/净值/持仓）、`/explorer.html`（因子库/评级榜）、`/bias-control.html`（六查/合格判定/相关性矩阵）、`/about.html`，原生 JS + ECharts。
+- UI：`/`（行情 K线/净值/持仓）、`/explorer.html`（因子库/评级榜）、`/bias-control.html`（六查/合格判定/相关性矩阵）、`/ml.html`（机器学习研究）、`/about.html`，原生 JS + ECharts。
 
 ## 快速开始
 
@@ -21,7 +22,7 @@ python -m venv .venv
 python run.py        # http://localhost:8000 （自带 DEM-001 模拟盘会话）
 ```
 
-四页：`/`、`/explorer.html`、`/bias-control.html`、`/about.html`。
+五页：`/`、`/explorer.html`、`/bias-control.html`、`/ml.html`、`/about.html`。
 
 ## CLI 一览
 
@@ -45,6 +46,9 @@ console script 安装：`pip install -e . --no-deps`（pyproject 已声明 `supe
 
 K 线数据采用 Bronze/Silver/Gold 单向分层，版本化接口、质量标记和转换血缘见
 [`docs/K线数据分层与接口.md`](docs/K线数据分层与接口.md)。
+
+机器学习研究框架的训练协议、评分口径、接口和当前边界见
+[`docs/机器学习研究框架.md`](docs/机器学习研究框架.md)。
 
 策略可在 MD frontmatter 显式声明数据依赖（`data_dependencies`），平台据此
 一次解析策略的全部数据集合，见
@@ -77,13 +81,13 @@ superplatform backfill --all     # 40 永续 + BTC/ETH 现货，2019→now，1m+
 ## 目录结构
 
 ```
-src/superplatform/        # 内核：data / factors / strategy / evaluation / consumption / runtime / network
+src/superplatform/        # 内核：data / factors / strategy / evaluation / consumption / ml / runtime / network
 src/superplatform_web/    # FastAPI app + routes/（sim 形状 API → 内核服务映射）
-web/                      # 四页原生 JS + ECharts（API_DIFF.md 记录与 sim 源的 7 处差异）
+web/                      # 五页原生 JS + ECharts（含机器学习研究工作台）
 factors/ strategies/      # 内置双文件插件 + TEMPLATE.md
 imports/                  # 用户导入热插拔目录
 tools/                    # backfill.py / validate_report.py
-tests/                    # 381 个测试（pytest，判卷标准，勿动）
+tests/                    # pytest 自动化测试
 PROGRESS.md               # 全阶段建造与验收记录（含红→绿反向验证证据）
 BLOCKED.md                # 受阻项与取证（如：vision 永续归档自 2019-12-31 起，2019-09 段源端不存在）
 ```
@@ -91,7 +95,7 @@ BLOCKED.md                # 受阻项与取证（如：vision 永续归档自 20
 ## 测试
 
 ```bash
-python -m pytest tests/ -q     # 基线 381 passed / 0 skipped
+python -m pytest tests/ -q
 ```
 
 ## 已知限制
@@ -99,6 +103,7 @@ python -m pytest tests/ -q     # 基线 381 passed / 0 skipped
 - 本仓库数据回填依赖 data.binance.vision；UM 永续归档最早 2019-12-31（2019-09 段源端不存在，取证见 `BLOCKED.md`）。
 - testnet 需自备 `BINANCE_TESTNET_API_KEY` / `BINANCE_TESTNET_API_SECRET`（只从环境变量读）。
 - DuckDB 单写者：`run.py` 服务运行时不要并发跑评估类 CLI。
+- 机器学习任务当前是单进程内存队列；服务重启后任务状态不会保留，GPU/分布式训练仅预留扩展接口。
 
 ## License
 

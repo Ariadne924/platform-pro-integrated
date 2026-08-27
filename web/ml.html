@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>机器学习研究｜Superplatform</title>
+  <style>
+    :root{--bg:#0b0e11;--panel:#161a1e;--panel2:#1e2329;--line:#2b3139;--text:#eaecef;--muted:#929aa5;--gold:#f0b90b;--green:#0ecb81;--red:#f6465d}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,"Microsoft YaHei",sans-serif}
+    header{height:58px;display:flex;align-items:center;justify-content:space-between;padding:0 24px;border-bottom:1px solid var(--line);background:#111418}
+    header b{color:var(--gold);font-size:18px}a{color:var(--muted);text-decoration:none}a:hover{color:var(--gold)}
+    main{display:grid;grid-template-columns:350px 1fr;gap:16px;padding:16px;max-width:1500px;margin:auto}.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px}
+    h2,h3{margin:0 0 12px}h3{font-size:15px;color:var(--gold)}.field{margin-bottom:11px}.field label{display:block;color:var(--muted);font-size:12px;margin-bottom:4px}
+    input,select,textarea,button{width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:5px;padding:8px}textarea{min-height:62px;resize:vertical}
+    select[multiple]{min-height:145px}button{cursor:pointer;background:var(--gold);color:#111;font-weight:700;border:0}button.secondary{background:var(--panel2);color:var(--text);border:1px solid var(--line)}button:disabled{opacity:.5;cursor:not-allowed}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}.checks{display:flex;gap:12px;flex-wrap:wrap}.checks label{color:var(--text)}.checks input{width:auto;margin-right:4px}
+    .toolbar{display:grid;grid-template-columns:1fr 1fr;gap:8px}.status{padding:10px;border-radius:5px;background:var(--panel2);margin-bottom:12px}.progress{height:6px;background:#292f36;border-radius:4px;overflow:hidden;margin-top:7px}.bar{height:100%;width:0;background:var(--gold)}
+    .cards{display:grid;grid-template-columns:repeat(5,minmax(120px,1fr));gap:10px;margin-bottom:14px}.card{background:var(--panel2);padding:12px;border-radius:6px;border:1px solid var(--line)}.card small{display:block;color:var(--muted)}.card strong{font-size:20px}
+    table{width:100%;border-collapse:collapse;margin-top:8px}th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line);font-size:12px}th{color:var(--muted)}.ok{color:var(--green)}.bad{color:var(--red)}.note{color:var(--muted);font-size:12px}.hidden{display:none}canvas{width:100%;height:240px;background:#101317;border-radius:6px}
+    @media(max-width:900px){main{grid-template-columns:1fr}.cards{grid-template-columns:repeat(2,1fr)}}
+  </style>
+</head>
+<body>
+<header><b>Superplatform · 机器学习研究</b><a href="/">返回主平台</a></header>
+<main>
+  <section class="panel">
+    <h2>研究配置</h2>
+    <p class="note">严格 Walk-Forward，仅用于研究，不代表可实盘 Alpha。</p>
+    <div class="grid2"><div class="field"><label>交易所</label><input id="exchange" value="binance"></div><div class="field"><label>市场</label><select id="market"><option value="perpetual">永续</option><option value="spot">现货</option></select></div></div>
+    <div class="field"><label>标的（逗号分隔，至少两个）</label><textarea id="symbols">BTCUSDT,ETHUSDT,SOLUSDT</textarea></div>
+    <div class="field"><label>候选因子（Ctrl/Cmd 多选）</label><select id="factors" multiple></select></div>
+    <div class="grid2"><div class="field"><label>开始</label><input id="start" type="date" value="2024-01-01"></div><div class="field"><label>结束</label><input id="end" type="date"></div></div>
+    <div class="grid2"><div class="field"><label>频率</label><select id="frequency"><option>1d</option><option>4h</option><option>1h</option></select></div><div class="field"><label>预测周期（bars）</label><select id="horizon"><option>1</option><option>5</option><option>10</option><option>20</option></select></div></div>
+    <div class="grid2"><div class="field"><label>Top N</label><input id="topn" type="number" min="1" value="2"></div><div class="field"><label>成本 bps（费率+滑点）</label><input id="cost" value="4,2"></div></div>
+    <div class="field"><label>模型</label><div class="checks"><label><input type="checkbox" name="model" value="ridge" checked>Ridge</label><label><input type="checkbox" name="model" value="elastic_net" checked>Elastic Net</label><label><input type="checkbox" name="model" value="tree_stumps" checked>Tree</label></div></div>
+    <h3>Walk-Forward</h3><div class="grid2"><div class="field"><label>最小训练周期</label><input id="mintrain" type="number" value="60"></div><div class="field"><label>测试周期</label><input id="testsize" type="number" value="20"></div></div>
+    <div class="field"><label>Embargo 周期</label><input id="embargo" type="number" value="1"></div>
+    <h3>牛熊震荡识别</h3><div class="grid2"><div class="field"><label>快均线</label><input id="fast" type="number" value="20"></div><div class="field"><label>慢均线</label><input id="slow" type="number" value="60"></div></div>
+    <h3>风险门禁</h3><div class="grid2"><div class="field"><label>最大回撤</label><input id="maxdd" type="number" step="0.01" value="0.25"></div><div class="field"><label>VaR 上限</label><input id="varlimit" type="number" step="0.01" value="0.08"></div></div>
+    <div class="field"><label>Expected Shortfall 上限</label><input id="eslimit" type="number" step="0.01" value="0.12"></div>
+    <div class="toolbar"><button id="submit" onclick="submitJob()">开始研究</button><button id="cancel" class="secondary" disabled onclick="cancelJob()">取消任务</button></div>
+  </section>
+  <section>
+    <div class="panel status"><b id="status-text">尚未开始</b><div id="event-text" class="note">配置完成后提交任务</div><div class="progress"><div class="bar" id="progress-bar"></div></div></div>
+    <div id="result" class="hidden">
+      <div class="cards" id="score-cards"></div>
+      <div class="panel"><h3>机器学习策略 vs 等权基准</h3><canvas id="equity"></canvas><div id="compare"></div></div>
+      <div class="panel" style="margin-top:14px"><h3>市场状态与风险</h3><div id="risk"></div><div id="regimes"></div></div>
+      <div class="panel" style="margin-top:14px"><h3>推荐因子权重</h3><div id="features"></div></div>
+    </div>
+  </section>
+</main>
+<script>
+let currentJob=null,pollTimer=null;
+const $=id=>document.getElementById(id); const num=id=>Number($(id).value);
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function pct(v){return v==null?'--':(Number(v)*100).toFixed(2)+'%';} function fixed(v,n=3){return v==null?'--':Number(v).toFixed(n);}
+async function api(url,options){const r=await fetch(url,options);const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.detail||data.error||r.statusText);return data;}
+async function loadFactors(){try{const rows=await api('/api/factors');$('factors').innerHTML=rows.filter(x=>x.available!==false).map((x,i)=>`<option value="${esc(x.name)}" ${i<3?'selected':''}>${esc(x.name)} · ${esc(x.category)}</option>`).join('');}catch(e){$('event-text').textContent='因子加载失败：'+e.message;}}
+function payload(){const [fee,slip]=$('cost').value.split(',').map(Number);return{factors:[...$('factors').selectedOptions].map(x=>x.value),symbols:$('symbols').value.split(',').map(x=>x.trim()).filter(Boolean),start:new Date($('start').value).toISOString(),end:new Date($('end').value+'T23:59:59Z').toISOString(),exchange:$('exchange').value,market_type:$('market').value,frequency:$('frequency').value,target_horizon:num('horizon'),top_n:num('topn'),models:[...document.querySelectorAll('[name=model]:checked')].map(x=>x.value),taker_fee_bps:fee,slippage_bps:slip,walk_forward:{min_train_periods:num('mintrain'),test_periods:num('testsize'),embargo_periods:num('embargo')},regime:{fast_window:num('fast'),slow_window:num('slow')},risk:{max_drawdown_limit:num('maxdd'),var_limit:num('varlimit'),expected_shortfall_limit:num('eslimit')}};}
+async function submitJob(){try{$('submit').disabled=true;const data=await api('/api/v1/ml/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload())});currentJob=data.job_id;$('cancel').disabled=false;renderStatus(data);clearInterval(pollTimer);pollTimer=setInterval(poll,800);await poll();}catch(e){$('status-text').textContent='提交失败';$('event-text').textContent=e.message;$('submit').disabled=false;}}
+async function poll(){if(!currentJob)return;try{const data=await api('/api/v1/ml/jobs/'+currentJob);renderStatus(data);if(['done','error','cancelled'].includes(data.status)){clearInterval(pollTimer);$('submit').disabled=false;$('cancel').disabled=true;if(data.status==='done')renderResult(data.result);}}catch(e){$('event-text').textContent='查询失败：'+e.message;}}
+async function cancelJob(){if(!currentJob)return;await api('/api/v1/ml/jobs/'+currentJob,{method:'DELETE'});}
+function renderStatus(job){$('status-text').textContent=`${job.status} · ${job.stage}`;$('progress-bar').style.width=(Number(job.progress||0)*100)+'%';const last=(job.events||[]).at(-1);$('event-text').textContent=job.error||(last&&last.message)||'等待中';}
+function renderResult(r){$('result').classList.remove('hidden');const s=r.score;$('score-cards').innerHTML=[['总分',s.score],['下侧风险',s.components.downside_risk],['稳健性',s.components.walk_forward_robustness],['相对收益',s.components.relative_performance],['右尾奖励',s.components.upside_bonus]].map(([k,v])=>`<div class="card"><small>${k}</small><strong>${fixed(v,2)}</strong></div>`).join('');const a=r.strategy.metrics,b=r.equal_weight_benchmark.metrics;$('compare').innerHTML=`<table><tr><th></th><th>ML</th><th>等权</th></tr><tr><td>总收益</td><td>${pct(a.total_return)}</td><td>${pct(b.total_return)}</td></tr><tr><td>Sharpe</td><td>${fixed(a.sharpe)}</td><td>${fixed(b.sharpe)}</td></tr><tr><td>最大回撤</td><td>${pct(a.max_drawdown)}</td><td>${pct(b.max_drawdown)}</td></tr></table>`;drawEquity(r.strategy.equity,r.equal_weight_benchmark.equity);const t=r.tail_risk,m=r.market_regime;$('risk').innerHTML=`<p>当前状态：<b>${esc(m.latest.regime)}</b>（置信度 ${pct(m.latest.confidence)}） · 评分门禁：<b class="${s.status==='eligible'?'ok':'bad'}">${esc(s.status)}</b></p><p>VaR ${pct(t.historical_var)} · ES ${pct(t.expected_shortfall)} · 上涨捕获 ${pct(t.upside_capture)} · 错失上涨 ${pct(t.missed_upside_rate)}</p>`;$('regimes').innerHTML=table(['状态','样本','收益','Sharpe'],Object.entries(m.performance).map(([k,v])=>[k,v.sample_count,pct(v.total_return),fixed(v.sharpe)]));$('features').innerHTML=table(['因子','平均权重','选择频率','符号一致性'],r.feature_recommendations.slice(0,20).map(x=>[x.feature,fixed(x.mean_weight,4),pct(x.selection_frequency),pct(x.sign_consistency)]));}
+function table(headers,rows){return `<table><tr>${headers.map(x=>`<th>${x}</th>`).join('')}</tr>${rows.map(row=>`<tr>${row.map(x=>`<td>${esc(x)}</td>`).join('')}</tr>`).join('')}</table>`;}
+function drawEquity(a,b){const c=$('equity'),dpr=devicePixelRatio||1,w=c.clientWidth||800,h=240;c.width=w*dpr;c.height=h*dpr;const x=c.getContext('2d');x.scale(dpr,dpr);x.clearRect(0,0,w,h);const series=[a,b],all=series.flatMap(s=>s.map(p=>Number(p.equity)));const min=Math.min(...all),max=Math.max(...all),span=max-min||1;series.forEach((s,j)=>{x.strokeStyle=j?'#929aa5':'#f0b90b';x.lineWidth=2;x.beginPath();s.forEach((p,i)=>{const px=i/(Math.max(1,s.length-1))*w,py=h-(Number(p.equity)-min)/span*(h-20)-10;i?x.lineTo(px,py):x.moveTo(px,py);});x.stroke();});}
+$('end').value=new Date().toISOString().slice(0,10);loadFactors();
+</script>
+</body>
+</html>
