@@ -319,7 +319,54 @@ def _feature_recommendations(
     return rows
 
 
-def run_ml_research(panel: pd.DataFrame, *, config: MLResearchConfig | None = None) -> dict[str, Any]:
+def _existing_signal_scores(
+    signals: pd.DataFrame,
+    *,
+    oos_index: pd.MultiIndex,
+) -> pd.Series:
+    """Align an existing strategy's target positions to the ML OOS panel.
+
+    Existing strategies may emit sparse rebalance rows.  Positions therefore
+    carry forward per symbol, while observations before the first signal stay
+    flat.  The aligned position is also the strategy's predictive score for
+    Signal IC / Rank IC, so non-ML strategies are not penalised merely because
+    they do not expose model probabilities.
+    """
+    required = {"timestamp", "symbol", "position"}
+    missing = sorted(required - set(signals.columns))
+    if missing:
+        raise ValueError(f"existing strategy signals are missing columns: {missing}")
+    frame = signals.loc[:, ["timestamp", "symbol", "position"]].copy()
+    frame["timestamp"] = pd.to_datetime(frame["timestamp"], utc=True, errors="coerce")
+    frame["symbol"] = frame["symbol"].astype(str)
+    frame["position"] = pd.to_numeric(frame["position"], errors="coerce")
+    frame = frame.dropna(subset=["timestamp", "symbol", "position"])
+    frame = frame.drop_duplicates(["timestamp", "symbol"], keep="last")
+    raw = frame.set_index(["timestamp", "symbol"])["position"].sort_index()
+    aligned_parts: list[pd.Series] = []
+    for symbol in oos_index.get_level_values("symbol").unique():
+        target_index = oos_index[oos_index.get_level_values("symbol") == symbol]
+        symbol_scores = raw[raw.index.get_level_values("symbol") == str(symbol)]
+        timestamps = target_index.get_level_values("timestamp")
+        if symbol_scores.empty:
+            carried = pd.Series(0.0, index=timestamps)
+        else:
+            carried = symbol_scores.droplevel("symbol").reindex(
+                timestamps, method="ffill"
+            ).fillna(0.0)
+        carried.index = target_index
+        aligned_parts.append(carried)
+    if not aligned_parts:
+        return pd.Series(dtype=float, name="position")
+    return pd.concat(aligned_parts).sort_index().rename("position")
+
+
+def run_ml_research(
+    panel: pd.DataFrame,
+    *,
+    config: MLResearchConfig | None = None,
+    existing_strategy_signals: dict[str, pd.DataFrame] | None = None,
+) -> dict[str, Any]:
     """Run the first complete ML → signals → unified backtest → score slice."""
     config = config or MLResearchConfig()
     config.validate()
@@ -389,6 +436,30 @@ def run_ml_research(panel: pd.DataFrame, *, config: MLResearchConfig | None = No
         backtest_payloads[name] = payload
         strategy_returns[name] = returns
 
+    existing_errors: dict[str, str] = {}
+    existing_score_series: dict[str, pd.Series] = {}
+    reserved_names = set(strategy_returns)
+    for name, raw_signals in (existing_strategy_signals or {}).items():
+        if name in reserved_names:
+            existing_errors[name] = "name collides with an ML candidate or baseline"
+            continue
+        try:
+            position_scores = _existing_signal_scores(
+                raw_signals,
+                oos_index=shared_score_frame.index,
+            )
+            if position_scores.empty or not bool(position_scores.abs().gt(0).any()):
+                raise ValueError("strategy has no non-zero positions in the ML OOS window")
+            signals = position_scores.rename("position").reset_index()
+            signals.attrs["strategy_name"] = name
+            result = backtest(signals, **kwargs)
+            payload, returns = _backtest_payload(result)
+            backtest_payloads[name] = payload
+            strategy_returns[name] = returns
+            existing_score_series[name] = position_scores
+        except Exception as exc:
+            existing_errors[name] = f"{type(exc).__name__}: {exc}"
+
     ml_payload = backtest_payloads["ensemble"]
     baseline_payload = backtest_payloads["equal_weight"]
     baseline_returns = strategy_returns["equal_weight"]
@@ -405,6 +476,15 @@ def run_ml_research(panel: pd.DataFrame, *, config: MLResearchConfig | None = No
         name: _correlation_metrics(scores, target.reindex(scores.index))
         for name, scores in strategy_scores.items()
     }
+    model_metrics.update(
+        {
+            name: {
+                **_correlation_metrics(scores, target.reindex(scores.index)),
+                "method": "strategy_position_signal",
+            }
+            for name, scores in existing_score_series.items()
+        }
+    )
     correlations = model_metrics["ensemble"]
     strategy_evidence: dict[str, dict[str, Any]] = {}
     scorecards: dict[str, dict[str, Any]] = {}
@@ -451,6 +531,7 @@ def run_ml_research(panel: pd.DataFrame, *, config: MLResearchConfig | None = No
                 if config.core_factor is not None
                 else {}
             ),
+            **{name: "existing_strategy" for name in existing_score_series},
         },
     )
     comparison["candidate_groups"] = {
@@ -460,6 +541,7 @@ def run_ml_research(panel: pd.DataFrame, *, config: MLResearchConfig | None = No
             "equal_weight",
             *(["core_factor"] if config.core_factor is not None else []),
         ],
+        "existing_strategies": list(existing_score_series),
     }
     comparison["details"] = strategy_evidence
     regime_metrics = strategy_evidence["ensemble"]["regime_performance"]
@@ -493,6 +575,10 @@ def run_ml_research(panel: pd.DataFrame, *, config: MLResearchConfig | None = No
         },
         "models": model_metrics,
         "strategy_comparison": comparison,
+        "existing_strategy_scores": {
+            name: strategy_evidence[name] for name in existing_score_series
+        },
+        "existing_strategy_errors": existing_errors,
         "folds": walk_forward.folds,
         "fold_metrics": fold_metrics,
         "feature_recommendations": _feature_recommendations(

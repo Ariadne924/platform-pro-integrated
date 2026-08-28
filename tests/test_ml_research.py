@@ -153,3 +153,44 @@ def test_single_asset_mode_builds_timing_strategy_and_core_factor_baseline() -> 
     assert "core_factor" in {
         row["name"] for row in result["strategy_comparison"]["leaderboard"]
     }
+
+
+def test_existing_strategy_is_retested_and_scored_with_signal_ic() -> None:
+    panel = _research_panel()
+    base = panel.drop_duplicates(["timestamp", "symbol"])[
+        ["timestamp", "symbol", "ret_1"]
+    ].copy()
+    base["position"] = np.where(base["ret_1"] >= 0, 1.0, -1.0)
+
+    result = run_ml_research(
+        panel,
+        config=_config(),
+        existing_strategy_signals={"PYS-101": base[["timestamp", "symbol", "position"]]},
+    )
+
+    rows = {
+        row["name"]: row for row in result["strategy_comparison"]["leaderboard"]
+    }
+    assert rows["PYS-101"]["kind"] == "existing_strategy"
+    evidence = result["existing_strategy_scores"]["PYS-101"]
+    assert evidence["score"]["score"] <= 100
+    assert evidence["correlations"]["method"] == "strategy_position_signal"
+    assert evidence["correlations"]["ic"] is not None
+    assert result["existing_strategy_errors"] == {}
+
+
+def test_existing_strategy_without_oos_position_is_reported_not_fatal() -> None:
+    signals = pd.DataFrame(
+        {
+            "timestamp": [pd.Timestamp("2020-01-01", tz="UTC")],
+            "symbol": ["BTC"],
+            "position": [0.0],
+        }
+    )
+    result = run_ml_research(
+        _research_panel(),
+        config=_config(),
+        existing_strategy_signals={"empty_strategy": signals},
+    )
+    assert "empty_strategy" in result["existing_strategy_errors"]
+    assert "empty_strategy" not in result["existing_strategy_scores"]

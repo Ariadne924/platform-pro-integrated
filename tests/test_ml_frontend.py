@@ -28,3 +28,8 @@ def test_ml_page_uses_versioned_job_api_and_risk_contract() -> None:
     assert "仅用于分行情稳健性检验" in html
     assert "真正训练的模型只有" in html
     assert "非ML基准" in html
+    assert "纳入评分的已有策略" in html
+    assert "existing_strategies" in html
+    assert "已有策略评分拆解" in html
+    assert "existing_strategy_scores" in html
+    assert "/api/v1/ml/strategies" in html

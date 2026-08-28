@@ -121,6 +121,14 @@ def test_ml_capabilities_expose_risk_first_contract(client) -> None:
     assert payload["research_only"] is True
 
 
+def test_ml_lists_scoreable_registered_strategies(client) -> None:
+    response = client.get("/api/v1/ml/strategies")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["count"] == len(payload["strategies"])
+    assert all(row["name"] for row in payload["strategies"])
+
+
 def test_ml_job_runs_training_backtest_and_score(client) -> None:
     submitted = client.post("/api/v1/ml/jobs", json=_request())
     assert submitted.status_code == 202, submitted.text
@@ -163,9 +171,40 @@ def test_single_asset_job_recommends_core_and_companion_factor_weights(client) -
     assert sum(abs(row["recommended_weight"]) for row in result["feature_recommendations"]) == pytest.approx(1.0)
 
 
+def test_ml_job_can_score_registered_strategy_signals(client, monkeypatch) -> None:
+    async def fake_existing_signals(body, request):
+        del request
+        timestamps = pd.date_range("2024-01-01", periods=100, freq="D", tz="UTC")
+        rows = [
+            {"timestamp": ts, "symbol": symbol, "position": 1.0}
+            for ts in timestamps
+            for symbol in body.symbols
+        ]
+        return {"PYS-101": pd.DataFrame(rows)}, {}
+
+    monkeypatch.setattr(ml_v1, "_load_existing_strategy_signals", fake_existing_signals)
+    request = _request()
+    request["existing_strategies"] = ["PYS-101"]
+    submitted = client.post("/api/v1/ml/jobs", json=request)
+    assert submitted.status_code == 202, submitted.text
+    completed = _poll(client, submitted.json()["job_id"])
+    assert completed["status"] == "done", completed.get("error")
+    result = completed["result"]
+    assert "PYS-101" in result["existing_strategy_scores"]
+    kinds = {
+        row["name"]: row["kind"]
+        for row in result["strategy_comparison"]["leaderboard"]
+    }
+    assert kinds["PYS-101"] == "existing_strategy"
+
+
 def test_ml_job_validation_and_unknown_status(client) -> None:
     invalid = _request()
     invalid["top_n"] = 99
     response = client.post("/api/v1/ml/jobs", json=invalid)
     assert response.status_code == 422
     assert client.get("/api/v1/ml/jobs/unknown").status_code == 404
+
+    reserved = _request()
+    reserved["existing_strategies"] = ["ensemble"]
+    assert client.post("/api/v1/ml/jobs", json=reserved).status_code == 422

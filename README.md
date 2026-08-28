@@ -5,7 +5,7 @@
 - 数据层：Binance USDT-M 永续 + 现货，kline(1m/1d) + funding_rate + open_interest，DuckDB 缓存、增量回填、UTC 强校验。
 - 因子/策略：MD+impl 双文件协议（因子 12 条 / 策略 10 条校验），`imports/` 落文件 10 秒内热注册、删 MD 即注销；注册表 mtime 增量 diff，支撑数千因子。
 - 研究：IC/RankIC/ICIR/衰减/分层/换手 HTML 报告、前视硬门槛、S~D 评级 + 评级榜、偏差控制六查 + 合格判定，缓存按 (因子 × 数据版本) 键控。
-- 机器学习：Gold 因子面板、单标的择时/多标的组合、核心因子与协同因子权重推荐、Expanding Walk-Forward（Purge/Embargo）、分行情稳健性、逐模型自动回测、统一策略排行与风险优先评分；当前定位为研究框架，不直接实盘下单。
+- 机器学习：Gold 因子面板、单标的择时/多标的组合、核心因子与协同因子权重推荐、Expanding Walk-Forward（Purge/Embargo）、分行情稳健性、逐模型自动回测；已有注册策略也可按相同样本外窗口、成本和风险门禁进入统一排行；当前定位为研究框架，不直接实盘下单。
 - 交易：策略出仓位权重、消费层转订单；回测（Sharpe/MaxDD）、`live` 模拟盘（敞口 100% 封顶、反转拆单、超资金拒单）、Binance testnet（key 只读环境变量）。
 - UI：`/`（行情 K线/净值/持仓）、`/explorer.html`（因子库/评级榜）、`/bias-control.html`（六查/合格判定/相关性矩阵）、`/ml.html`（机器学习研究）、`/about.html`，原生 JS + ECharts。
 
