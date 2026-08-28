@@ -168,6 +168,17 @@ async def ml_capabilities() -> dict[str, Any]:
         "job_backend": "in_process",
         "gpu_enabled": False,
         "future_plugins": ["lightgbm", "xgboost", "deep_learning_gpu"],
+        "comparison_protocol": "shared-window-risk-first-v1",
+        "comparison_metrics": [
+            "total_return",
+            "sharpe",
+            "sortino",
+            "max_drawdown",
+            "historical_var",
+            "expected_shortfall",
+            "paired_block_bootstrap",
+            "pareto_front",
+        ],
         "score_weights": {
             "downside_risk": 45,
             "walk_forward_robustness": 20,

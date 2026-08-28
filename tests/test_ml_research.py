@@ -83,6 +83,7 @@ def test_prepare_ml_panel_pivots_factors_without_losing_utc() -> None:
 def test_run_ml_research_completes_full_vertical_slice() -> None:
     result = run_ml_research(_research_panel(), config=_config())
     assert result["status"] == "completed_research_only"
+    assert result["protocol_version"] == "ml-research-v2"
     assert result["sample"]["factors"] == ["liquidity", "low_volatility", "momentum"]
     assert result["sample"]["oos_prediction_rows"] > 0
     assert result["strategy"]["equity"]
@@ -101,6 +102,20 @@ def test_run_ml_research_completes_full_vertical_slice() -> None:
     }
     assert result["score"]["weights"]["upside_bonus"] == 5
     assert result["score"]["score"] <= 100
+    comparison = result["strategy_comparison"]
+    assert comparison["benchmark"] == "equal_weight"
+    assert {row["name"] for row in comparison["leaderboard"]} == {
+        "ridge",
+        "elastic_net",
+        "tree_stumps",
+        "ensemble",
+        "equal_weight",
+    }
+    assert comparison["relative_to_benchmark"]
+    assert comparison["pareto_front"]
+    assert {
+        row["sample_count"] for row in comparison["leaderboard"]
+    } == {comparison["common_window"]["periods"]}
 
 
 def test_run_ml_research_requires_cross_section() -> None:

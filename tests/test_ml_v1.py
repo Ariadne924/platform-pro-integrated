@@ -110,6 +110,8 @@ def test_ml_capabilities_expose_risk_first_contract(client) -> None:
     assert payload["regimes"] == ["bull", "bear", "sideways"]
     assert payload["score_weights"]["downside_risk"] == 45
     assert payload["score_weights"]["upside_bonus"] == 5
+    assert payload["comparison_protocol"] == "shared-window-risk-first-v1"
+    assert "paired_block_bootstrap" in payload["comparison_metrics"]
     assert payload["research_only"] is True
 
 
@@ -122,6 +124,7 @@ def test_ml_job_runs_training_backtest_and_score(client) -> None:
     assert result["result"]["strategy"]["equity"]
     assert result["result"]["equal_weight_benchmark"]["equity"]
     assert result["result"]["score"]["weights"]["upside_bonus"] == 5
+    assert len(result["result"]["strategy_comparison"]["leaderboard"]) == 5
 
 
 def test_identical_ml_job_reuses_cached_result(client) -> None:

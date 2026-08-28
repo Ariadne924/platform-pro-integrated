@@ -19,3 +19,5 @@ def test_ml_page_uses_versioned_job_api_and_risk_contract() -> None:
     assert "Expected Shortfall" in html
     assert "右尾奖励" in html
     assert "等权基准" in html
+    assert "策略统一排行" in html
+    assert "strategy_comparison" in html

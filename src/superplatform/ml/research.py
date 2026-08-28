@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from superplatform.consumption.backtest import BacktestResult, backtest
+from superplatform.ml.comparison import compare_strategy_returns
 from superplatform.ml.models import SUPPORTED_MODELS, WalkForwardConfig, walk_forward_panel
 from superplatform.ml.regime import RegimeConfig, detect_market_regime
 from superplatform.ml.risk import ScoreConfig, score_research_result, tail_risk_metrics
@@ -200,6 +201,30 @@ def _slice_return_metrics(returns: pd.Series) -> dict[str, Any]:
     }
 
 
+def _fold_return_metrics(
+    returns: pd.Series,
+    folds: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for fold in folds:
+        start, end = pd.Timestamp(fold["test_start"]), pd.Timestamp(fold["test_end"])
+        metrics = _slice_return_metrics(returns.loc[start:end])
+        metrics.update({"test_start": fold["test_start"], "test_end": fold["test_end"]})
+        rows.append(metrics)
+    return rows
+
+
+def _regime_return_metrics(
+    returns: pd.Series,
+    regime: pd.DataFrame,
+) -> dict[str, dict[str, Any]]:
+    regime_for_returns = regime["regime"].reindex(returns.index, method="ffill")
+    return {
+        name: _slice_return_metrics(returns[regime_for_returns.eq(name)])
+        for name in ("bull", "bear", "sideways")
+    }
+
+
 def _feature_recommendations(folds: list[dict[str, Any]]) -> list[dict[str, Any]]:
     buckets: dict[str, list[float]] = {}
     for fold in folds:
@@ -243,10 +268,23 @@ def run_ml_research(panel: pd.DataFrame, *, config: MLResearchConfig | None = No
         raise ValueError("insufficient history for the configured walk-forward run")
     oos_index = ensemble.index
     baseline_score = _equal_weight_factor_score(features).reindex(oos_index)
-    ml_signals = _scores_to_signals(ensemble, config.top_n, "ml_ensemble")
-    baseline_signals = _scores_to_signals(
-        baseline_score, config.top_n, "equal_weight_factors"
-    )
+    strategy_scores = {
+        model: walk_forward.predictions[model].dropna()
+        for model in config.models
+    }
+    strategy_scores["ensemble"] = ensemble
+    strategy_scores["equal_weight"] = baseline_score.dropna()
+    shared_score_frame = pd.concat(
+        [scores.rename(name) for name, scores in strategy_scores.items()],
+        axis=1,
+        join="inner",
+    ).dropna()
+    if shared_score_frame.empty:
+        raise ValueError("strategies do not share an out-of-sample comparison window")
+    strategy_scores = {
+        name: shared_score_frame[name].rename(name)
+        for name in strategy_scores
+    }
     prices_by_symbol = _price_data(prices)
     kwargs = {
         "price_data": prices_by_symbol,
@@ -254,10 +292,18 @@ def run_ml_research(panel: pd.DataFrame, *, config: MLResearchConfig | None = No
         "taker_fee_bps": config.taker_fee_bps,
         "slippage_bps": config.slippage_bps,
     }
-    ml_backtest = backtest(ml_signals, **kwargs)
-    baseline_backtest = backtest(baseline_signals, **kwargs)
-    ml_payload, ml_returns = _backtest_payload(ml_backtest)
-    baseline_payload, baseline_returns = _backtest_payload(baseline_backtest)
+    backtest_payloads: dict[str, dict[str, Any]] = {}
+    strategy_returns: dict[str, pd.Series] = {}
+    for name, scores in strategy_scores.items():
+        signals = _scores_to_signals(scores, config.top_n, name)
+        result = backtest(signals, **kwargs)
+        payload, returns = _backtest_payload(result)
+        backtest_payloads[name] = payload
+        strategy_returns[name] = returns
+
+    ml_payload = backtest_payloads["ensemble"]
+    baseline_payload = backtest_payloads["equal_weight"]
+    baseline_returns = strategy_returns["equal_weight"]
 
     reference = config.reference_symbol or str(prices["symbol"].iloc[0])
     reference_close = (
@@ -267,42 +313,57 @@ def run_ml_research(panel: pd.DataFrame, *, config: MLResearchConfig | None = No
         .sort_index()
     )
     regime = detect_market_regime(reference_close, config=config.regime)
-    regime_for_returns = regime["regime"].reindex(ml_returns.index, method="ffill")
-    regime_metrics = {
-        name: _slice_return_metrics(ml_returns[regime_for_returns.eq(name)])
-        for name in ("bull", "bear", "sideways")
-    }
-    fold_metrics = []
-    for fold in walk_forward.folds:
-        start, end = pd.Timestamp(fold["test_start"]), pd.Timestamp(fold["test_end"])
-        metrics = _slice_return_metrics(ml_returns.loc[start:end])
-        metrics.update({"test_start": fold["test_start"], "test_end": fold["test_end"]})
-        fold_metrics.append(metrics)
-    correlations = _correlation_metrics(ensemble, target.reindex(oos_index))
     model_metrics = {
-        model: _correlation_metrics(
-            walk_forward.predictions[model], target
-        )
-        for model in [*config.models, "ensemble"]
+        name: _correlation_metrics(scores, target.reindex(scores.index))
+        for name, scores in strategy_scores.items()
     }
-    tails = tail_risk_metrics(
-        ml_returns,
-        benchmark_returns=baseline_returns,
+    correlations = model_metrics["ensemble"]
+    strategy_evidence: dict[str, dict[str, Any]] = {}
+    scorecards: dict[str, dict[str, Any]] = {}
+    for name, returns in strategy_returns.items():
+        fold_metrics = _fold_return_metrics(returns, walk_forward.folds)
+        regime_metrics = _regime_return_metrics(returns, regime)
+        tails = tail_risk_metrics(
+            returns,
+            benchmark_returns=baseline_returns,
+            confidence=config.score.confidence,
+        )
+        correlation = model_metrics[name]
+        scorecard = score_research_result(
+            strategy_metrics=backtest_payloads[name]["metrics"],
+            benchmark_metrics=baseline_payload["metrics"],
+            tail_metrics=tails,
+            fold_metrics=fold_metrics,
+            regime_metrics=regime_metrics,
+            ic=correlation["ic"],
+            rank_ic=correlation["rank_ic"],
+            config=config.score,
+        )
+        scorecards[name] = scorecard
+        strategy_evidence[name] = {
+            "backtest": backtest_payloads[name],
+            "correlations": correlation,
+            "fold_metrics": fold_metrics,
+            "regime_performance": regime_metrics,
+            "tail_risk": tails,
+            "score": scorecard,
+        }
+    comparison = compare_strategy_returns(
+        strategy_returns,
+        benchmark_name="equal_weight",
+        periods_per_year=_periods_per_year(config.frequency),
         confidence=config.score.confidence,
+        scorecards=scorecards,
     )
-    score = score_research_result(
-        strategy_metrics=ml_payload["metrics"],
-        benchmark_metrics=baseline_payload["metrics"],
-        tail_metrics=tails,
-        fold_metrics=fold_metrics,
-        regime_metrics=regime_metrics,
-        ic=correlations["ic"],
-        rank_ic=correlations["rank_ic"],
-        config=config.score,
-    )
+    comparison["details"] = strategy_evidence
+    regime_metrics = strategy_evidence["ensemble"]["regime_performance"]
+    fold_metrics = strategy_evidence["ensemble"]["fold_metrics"]
+    tails = strategy_evidence["ensemble"]["tail_risk"]
+    score = strategy_evidence["ensemble"]["score"]
     latest_regime = regime.iloc[-1]
     return {
         "status": "completed_research_only",
+        "protocol_version": "ml-research-v2",
         "config": {
             "target_horizon": config.target_horizon,
             "top_n": config.top_n,
@@ -322,6 +383,7 @@ def run_ml_research(panel: pd.DataFrame, *, config: MLResearchConfig | None = No
             "oos_prediction_rows": int(ensemble.notna().sum()),
         },
         "models": model_metrics,
+        "strategy_comparison": comparison,
         "folds": walk_forward.folds,
         "fold_metrics": fold_metrics,
         "feature_recommendations": _feature_recommendations(walk_forward.folds),
