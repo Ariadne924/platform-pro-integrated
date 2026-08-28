@@ -17,6 +17,9 @@ from superplatform.ml.risk import ScoreConfig, score_research_result, tail_risk_
 
 @dataclass(frozen=True)
 class MLResearchConfig:
+    research_mode: str = "cross_section"
+    allow_short: bool = False
+    core_factor: str | None = None
     target_horizon: int = 1
     top_n: int = 3
     frequency: str = "1d"
@@ -29,6 +32,8 @@ class MLResearchConfig:
     reference_symbol: str | None = None
 
     def validate(self) -> None:
+        if self.research_mode not in {"single_asset", "cross_section"}:
+            raise ValueError("research_mode must be single_asset or cross_section")
         if self.target_horizon not in {1, 5, 10, 20}:
             raise ValueError("target_horizon must be one of 1, 5, 10, 20")
         if self.top_n < 1:
@@ -97,12 +102,26 @@ def _equal_weight_factor_score(features: pd.DataFrame) -> pd.Series:
     return normalized.mean(axis=1, skipna=True).rename("equal_weight_score")
 
 
-def _scores_to_signals(scores: pd.Series, top_n: int, name: str) -> pd.DataFrame:
+def _scores_to_signals(
+    scores: pd.Series,
+    top_n: int,
+    name: str,
+    *,
+    research_mode: str,
+    allow_short: bool,
+) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     clean = pd.to_numeric(scores, errors="coerce")
     for timestamp, group in clean.groupby(level="timestamp", sort=True):
         values = group.droplevel("timestamp").dropna().sort_values(ascending=False)
         if values.empty:
+            continue
+        if research_mode == "single_asset":
+            for symbol, value in values.items():
+                position = float(np.sign(value)) if allow_short else float(value > 0)
+                rows.append(
+                    {"timestamp": timestamp, "symbol": str(symbol), "position": position}
+                )
             continue
         selected = set(values.head(min(top_n, len(values))).index.astype(str))
         for symbol in values.index.astype(str):
@@ -162,6 +181,21 @@ def _backtest_payload(result: BacktestResult) -> tuple[dict[str, Any], pd.Series
 
 def _correlation_metrics(prediction: pd.Series, target: pd.Series) -> dict[str, Any]:
     aligned = pd.concat([prediction.rename("prediction"), target], axis=1).dropna()
+    if not aligned.empty and aligned.index.get_level_values("symbol").nunique() == 1:
+        valid = aligned["prediction"].nunique() >= 2 and aligned["target"].nunique() >= 2
+        ic = aligned["prediction"].corr(aligned["target"], method="pearson") if valid else None
+        rank_ic = (
+            aligned["prediction"].corr(aligned["target"], method="spearman")
+            if valid
+            else None
+        )
+        return {
+            "ic": float(ic) if ic is not None and pd.notna(ic) else None,
+            "rank_ic": float(rank_ic) if rank_ic is not None and pd.notna(rank_ic) else None,
+            "sample_periods": len(aligned),
+            "series": [],
+            "method": "time_series_single_asset",
+        }
     rows: list[dict[str, Any]] = []
     for timestamp, group in aligned.groupby(level="timestamp", sort=True):
         if (
@@ -186,6 +220,7 @@ def _correlation_metrics(prediction: pd.Series, target: pd.Series) -> dict[str, 
         "rank_ic": float(np.mean(rank_values)) if rank_values else None,
         "sample_periods": len(rows),
         "series": rows,
+        "method": "cross_sectional",
     }
 
 
@@ -225,27 +260,63 @@ def _regime_return_metrics(
     }
 
 
-def _feature_recommendations(folds: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _feature_recommendations(
+    folds: list[dict[str, Any]],
+    *,
+    core_factor: str | None,
+) -> list[dict[str, Any]]:
     buckets: dict[str, list[float]] = {}
     for fold in folds:
         model_weights = fold.get("model_weights", {})
+        normalized_models: list[dict[str, float]] = []
         for weights in model_weights.values():
-            for feature, value in weights.items():
-                buckets.setdefault(feature, []).append(float(value))
-    rows = []
-    total_models = max(1, sum(len(fold.get("model_weights", {})) for fold in folds))
+            denominator = sum(abs(float(value)) for value in weights.values())
+            if denominator <= 0:
+                continue
+            normalized_models.append(
+                {feature: float(value) / denominator for feature, value in weights.items()}
+            )
+        features = sorted({feature for weights in normalized_models for feature in weights})
+        for feature in features:
+            fold_weight = float(
+                np.mean([weights.get(feature, 0.0) for weights in normalized_models])
+            )
+            buckets.setdefault(feature, []).append(fold_weight)
+    rows: list[dict[str, Any]] = []
+    total_folds = max(1, len(folds))
     for feature, values in buckets.items():
         array: np.ndarray = np.asarray(values, dtype=float)
+        mean_weight = float(array.mean())
+        selection_frequency = len(values) / total_folds
+        sign_consistency = float(abs(np.sign(array).mean()))
+        stable_weight = mean_weight * selection_frequency * sign_consistency
         rows.append(
             {
                 "feature": feature,
-                "mean_weight": float(array.mean()),
+                "role": "core" if feature == core_factor else "recommended",
+                "direction": 1 if mean_weight >= 0 else -1,
+                "mean_weight": mean_weight,
                 "mean_absolute_weight": float(np.abs(array).mean()),
-                "selection_frequency": len(values) / total_models,
-                "sign_consistency": float(abs(np.sign(array).mean())),
+                "selection_frequency": selection_frequency,
+                "sign_consistency": sign_consistency,
+                "recommendation_score": abs(stable_weight),
+                "stable_weight": stable_weight,
+                "status": "ml_train_fold_candidate",
             }
         )
-    return sorted(rows, key=lambda row: row["mean_absolute_weight"], reverse=True)
+    rows.sort(
+        key=lambda row: (
+            float(row["recommendation_score"]),
+            float(row["selection_frequency"]),
+        ),
+        reverse=True,
+    )
+    denominator = sum(abs(float(row["stable_weight"])) for row in rows)
+    for row in rows:
+        row["recommended_weight"] = (
+            float(row["stable_weight"]) / denominator if denominator > 0 else 0.0
+        )
+    return rows
 
 
 def run_ml_research(panel: pd.DataFrame, *, config: MLResearchConfig | None = None) -> dict[str, Any]:
@@ -255,8 +326,15 @@ def run_ml_research(panel: pd.DataFrame, *, config: MLResearchConfig | None = No
     features, target, prices = prepare_ml_panel(
         panel, target_horizon=config.target_horizon
     )
-    if features.shape[1] < 1 or len(features.index.get_level_values("symbol").unique()) < 2:
-        raise ValueError("ML research requires at least one factor and two symbols")
+    symbol_count = len(features.index.get_level_values("symbol").unique())
+    if features.shape[1] < 1:
+        raise ValueError("ML research requires at least one factor")
+    if config.research_mode == "single_asset" and symbol_count != 1:
+        raise ValueError("single_asset research requires exactly one symbol")
+    if config.research_mode == "cross_section" and symbol_count < 2:
+        raise ValueError("cross_section research requires at least two symbols")
+    if config.core_factor is not None and config.core_factor not in features.columns:
+        raise ValueError("core_factor must be one of the selected factors")
     walk_forward = walk_forward_panel(
         features,
         target,
@@ -274,6 +352,10 @@ def run_ml_research(panel: pd.DataFrame, *, config: MLResearchConfig | None = No
     }
     strategy_scores["ensemble"] = ensemble
     strategy_scores["equal_weight"] = baseline_score.dropna()
+    if config.core_factor is not None:
+        strategy_scores["core_factor"] = _equal_weight_factor_score(
+            features[[config.core_factor]]
+        ).reindex(oos_index).dropna()
     shared_score_frame = pd.concat(
         [scores.rename(name) for name, scores in strategy_scores.items()],
         axis=1,
@@ -295,7 +377,13 @@ def run_ml_research(panel: pd.DataFrame, *, config: MLResearchConfig | None = No
     backtest_payloads: dict[str, dict[str, Any]] = {}
     strategy_returns: dict[str, pd.Series] = {}
     for name, scores in strategy_scores.items():
-        signals = _scores_to_signals(scores, config.top_n, name)
+        signals = _scores_to_signals(
+            scores,
+            config.top_n,
+            name,
+            research_mode=config.research_mode,
+            allow_short=config.allow_short,
+        )
         result = backtest(signals, **kwargs)
         payload, returns = _backtest_payload(result)
         backtest_payloads[name] = payload
@@ -354,7 +442,25 @@ def run_ml_research(panel: pd.DataFrame, *, config: MLResearchConfig | None = No
         periods_per_year=_periods_per_year(config.frequency),
         confidence=config.score.confidence,
         scorecards=scorecards,
+        candidate_kinds={
+            **{model: "trained_model" for model in config.models},
+            "ensemble": "derived_ensemble",
+            "equal_weight": "non_ml_baseline",
+            **(
+                {"core_factor": "non_ml_baseline"}
+                if config.core_factor is not None
+                else {}
+            ),
+        },
     )
+    comparison["candidate_groups"] = {
+        "trained_models": list(config.models),
+        "derived_ensembles": ["ensemble"],
+        "non_ml_baselines": [
+            "equal_weight",
+            *(["core_factor"] if config.core_factor is not None else []),
+        ],
+    }
     comparison["details"] = strategy_evidence
     regime_metrics = strategy_evidence["ensemble"]["regime_performance"]
     fold_metrics = strategy_evidence["ensemble"]["fold_metrics"]
@@ -365,6 +471,9 @@ def run_ml_research(panel: pd.DataFrame, *, config: MLResearchConfig | None = No
         "status": "completed_research_only",
         "protocol_version": "ml-research-v2",
         "config": {
+            "research_mode": config.research_mode,
+            "allow_short": config.allow_short,
+            "core_factor": config.core_factor,
             "target_horizon": config.target_horizon,
             "top_n": config.top_n,
             "frequency": config.frequency,
@@ -386,7 +495,10 @@ def run_ml_research(panel: pd.DataFrame, *, config: MLResearchConfig | None = No
         "strategy_comparison": comparison,
         "folds": walk_forward.folds,
         "fold_metrics": fold_metrics,
-        "feature_recommendations": _feature_recommendations(walk_forward.folds),
+        "feature_recommendations": _feature_recommendations(
+            walk_forward.folds,
+            core_factor=config.core_factor,
+        ),
         "strategy": ml_payload,
         "equal_weight_benchmark": baseline_payload,
         "correlations": correlations,

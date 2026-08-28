@@ -21,3 +21,10 @@ def test_ml_page_uses_versioned_job_api_and_risk_contract() -> None:
     assert "等权基准" in html
     assert "策略统一排行" in html
     assert "strategy_comparison" in html
+    assert "单标的择时" in html
+    assert "多标的组合" in html
+    assert "核心因子" in html
+    assert "自动推荐因子与权重" in html
+    assert "仅用于分行情稳健性检验" in html
+    assert "真正训练的模型只有" in html
+    assert "非ML基准" in html

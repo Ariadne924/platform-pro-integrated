@@ -61,7 +61,10 @@ class RiskBody(BaseModel):
 
 class MLJobRequest(BaseModel):
     factors: list[str] = Field(min_length=1, max_length=80)
-    symbols: list[str] = Field(min_length=2, max_length=200)
+    symbols: list[str] = Field(min_length=1, max_length=200)
+    research_mode: Literal["single_asset", "cross_section"] = "cross_section"
+    allow_short: bool = False
+    core_factor: str | None = None
     start: str
     end: str
     exchange: str = "binance"
@@ -93,17 +96,26 @@ class MLJobRequest(BaseModel):
             end = end.tz_convert("UTC")
         if start >= end:
             raise ValueError("start must be before end")
-        if self.top_n > len(set(self.symbols)):
+        if self.research_mode == "single_asset" and len(set(self.symbols)) != 1:
+            raise ValueError("single_asset research requires exactly one symbol")
+        if self.research_mode == "cross_section" and len(set(self.symbols)) < 2:
+            raise ValueError("cross_section research requires at least two symbols")
+        if self.research_mode == "cross_section" and self.top_n > len(set(self.symbols)):
             raise ValueError("top_n cannot exceed the number of unique symbols")
         if len(set(self.factors)) != len(self.factors):
             raise ValueError("factors must not contain duplicates")
         if len(set(self.symbols)) != len(self.symbols):
             raise ValueError("symbols must not contain duplicates")
+        if self.core_factor is not None and self.core_factor not in self.factors:
+            raise ValueError("core_factor must be included in factors")
         return self
 
 
 def _research_config(body: MLJobRequest) -> MLResearchConfig:
     return MLResearchConfig(
+        research_mode=body.research_mode,
+        allow_short=body.allow_short,
+        core_factor=body.core_factor,
         target_horizon=body.target_horizon,
         top_n=body.top_n,
         frequency=body.frequency,
@@ -164,6 +176,12 @@ async def ml_capabilities() -> dict[str, Any]:
     return {
         "models": list(SUPPORTED_MODELS),
         "target_horizons": [1, 5, 10, 20],
+        "research_modes": ["single_asset", "cross_section"],
+        "candidate_groups": {
+            "trained_models": list(SUPPORTED_MODELS),
+            "derived_ensembles": ["ensemble"],
+            "non_ml_baselines": ["equal_weight", "core_factor"],
+        },
         "regimes": ["bull", "bear", "sideways"],
         "job_backend": "in_process",
         "gpu_enabled": False,

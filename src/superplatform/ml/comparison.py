@@ -166,6 +166,7 @@ def compare_strategy_returns(
     periods_per_year: int,
     confidence: float = 0.95,
     scorecards: dict[str, dict[str, Any]] | None = None,
+    candidate_kinds: dict[str, str] | None = None,
     bootstrap_samples: int = 300,
 ) -> dict[str, Any]:
     """Compare candidates on a shared OOS window with paired uncertainty."""
@@ -181,6 +182,7 @@ def compare_strategy_returns(
         raise ValueError("strategies do not share enough return observations")
 
     scorecards = scorecards or {}
+    candidate_kinds = candidate_kinds or {}
     rows: list[dict[str, Any]] = []
     for name in sorted(aligned.columns):
         metrics = _return_metrics(
@@ -192,6 +194,7 @@ def compare_strategy_returns(
         rows.append(
             {
                 "name": name,
+                "kind": candidate_kinds.get(name, "unclassified"),
                 **metrics,
                 "score": scorecard.get("score"),
                 "status": scorecard.get("status", "unscored"),

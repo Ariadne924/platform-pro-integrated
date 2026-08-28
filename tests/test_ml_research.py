@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pandas as pd
 
@@ -51,6 +53,7 @@ def _research_panel(periods: int = 120) -> pd.DataFrame:
 def _config() -> MLResearchConfig:
     return MLResearchConfig(
         target_horizon=1,
+        core_factor="momentum",
         top_n=2,
         frequency="1d",
         models=("ridge", "elastic_net", "tree_stumps"),
@@ -110,12 +113,21 @@ def test_run_ml_research_completes_full_vertical_slice() -> None:
         "tree_stumps",
         "ensemble",
         "equal_weight",
+        "core_factor",
     }
     assert comparison["relative_to_benchmark"]
     assert comparison["pareto_front"]
+    kinds = {row["name"]: row["kind"] for row in comparison["leaderboard"]}
+    assert kinds["ridge"] == "trained_model"
+    assert kinds["ensemble"] == "derived_ensemble"
+    assert kinds["equal_weight"] == "non_ml_baseline"
+    assert kinds["core_factor"] == "non_ml_baseline"
     assert {
         row["sample_count"] for row in comparison["leaderboard"]
     } == {comparison["common_window"]["periods"]}
+    recommendations = result["feature_recommendations"]
+    assert any(row["role"] == "core" for row in recommendations)
+    assert np.isclose(sum(abs(row["recommended_weight"]) for row in recommendations), 1.0)
 
 
 def test_run_ml_research_requires_cross_section() -> None:
@@ -124,6 +136,20 @@ def test_run_ml_research_requires_cross_section() -> None:
     try:
         run_ml_research(panel, config=_config())
     except ValueError as exc:
-        assert "two symbols" in str(exc)
+        assert "cross_section" in str(exc)
     else:
         raise AssertionError("single-symbol research must be rejected")
+
+
+def test_single_asset_mode_builds_timing_strategy_and_core_factor_baseline() -> None:
+    panel = _research_panel()[lambda frame: frame["symbol"].eq("BTC")]
+    result = run_ml_research(
+        panel,
+        config=replace(_config(), research_mode="single_asset", top_n=1),
+    )
+
+    assert result["config"]["research_mode"] == "single_asset"
+    assert result["models"]["ensemble"]["method"] == "time_series_single_asset"
+    assert "core_factor" in {
+        row["name"] for row in result["strategy_comparison"]["leaderboard"]
+    }

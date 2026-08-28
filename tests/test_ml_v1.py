@@ -45,9 +45,10 @@ def _panel(periods: int = 100) -> pd.DataFrame:
 def _fresh_jobs(monkeypatch):
     ml_jobs._ml_jobs.clear()
 
-    async def fake_build_batch_panel(**_kwargs):
+    async def fake_build_batch_panel(**kwargs):
         await asyncio.sleep(0)
-        return _panel()
+        panel = _panel()
+        return panel[panel["symbol"].isin(kwargs["symbols"])]
 
     monkeypatch.setattr(ml_v1, "build_batch_panel", fake_build_batch_panel)
     yield
@@ -111,6 +112,11 @@ def test_ml_capabilities_expose_risk_first_contract(client) -> None:
     assert payload["score_weights"]["downside_risk"] == 45
     assert payload["score_weights"]["upside_bonus"] == 5
     assert payload["comparison_protocol"] == "shared-window-risk-first-v1"
+    assert payload["candidate_groups"]["trained_models"] == [
+        "ridge",
+        "elastic_net",
+        "tree_stumps",
+    ]
     assert "paired_block_bootstrap" in payload["comparison_metrics"]
     assert payload["research_only"] is True
 
@@ -135,6 +141,26 @@ def test_identical_ml_job_reuses_cached_result(client) -> None:
     assert second.status_code == 202
     assert second.json()["job_id"] == first["job_id"]
     assert second.json()["reused"] is True
+
+
+def test_single_asset_job_recommends_core_and_companion_factor_weights(client) -> None:
+    request = _request()
+    request.update(
+        {
+            "symbols": ["BTC"],
+            "research_mode": "single_asset",
+            "core_factor": "momentum",
+            "top_n": 1,
+        }
+    )
+    submitted = client.post("/api/v1/ml/jobs", json=request)
+    assert submitted.status_code == 202, submitted.text
+    completed = _poll(client, submitted.json()["job_id"])
+    assert completed["status"] == "done", completed.get("error")
+    result = completed["result"]
+    assert result["config"]["research_mode"] == "single_asset"
+    assert any(row["role"] == "core" for row in result["feature_recommendations"])
+    assert sum(abs(row["recommended_weight"]) for row in result["feature_recommendations"]) == pytest.approx(1.0)
 
 
 def test_ml_job_validation_and_unknown_status(client) -> None:
