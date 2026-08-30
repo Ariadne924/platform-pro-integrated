@@ -14,6 +14,10 @@ from superplatform.ml.models import DEFAULT_MODELS, WalkForwardConfig, walk_forw
 from superplatform.ml.portfolio import PortfolioConfig, build_portfolio_signals
 from superplatform.ml.regime import RegimeConfig, detect_market_regime
 from superplatform.ml.risk import ScoreConfig, score_research_result, tail_risk_metrics
+from superplatform.ml.threshold_research import (
+    ThresholdResearchConfig,
+    run_threshold_research,
+)
 
 
 @dataclass(frozen=True)
@@ -31,6 +35,9 @@ class MLResearchConfig:
     regime: RegimeConfig = field(default_factory=RegimeConfig)
     score: ScoreConfig = field(default_factory=ScoreConfig)
     portfolio: PortfolioConfig = field(default_factory=PortfolioConfig)
+    threshold_research: ThresholdResearchConfig = field(
+        default_factory=ThresholdResearchConfig
+    )
     reference_symbol: str | None = None
 
     def validate(self) -> None:
@@ -46,6 +53,7 @@ class MLResearchConfig:
         self.regime.validate()
         self.score.validate()
         self.portfolio.validate()
+        self.threshold_research.validate()
 
 
 def prepare_ml_panel(
@@ -493,6 +501,46 @@ def run_ml_research(
         .sort_index()
     )
     regime = detect_market_regime(reference_close, config=config.regime)
+    threshold_candidates: dict[str, dict[str, Any]] = {}
+    threshold_skipped: list[str] = []
+    if config.threshold_research.enabled:
+        candidates: list[tuple[str, pd.Series, bool]] = [
+            ("ensemble", strategy_scores["ensemble"], config.allow_short)
+        ]
+        candidates.extend(
+            (
+                name,
+                scores,
+                bool(scores.lt(0.0).any()),
+            )
+            for name, scores in existing_score_series.items()
+        )
+        selected_candidates = candidates[: config.threshold_research.max_candidates]
+        threshold_skipped = [
+            name for name, _, _ in candidates[config.threshold_research.max_candidates :]
+        ]
+        for name, scores, allow_short in selected_candidates:
+            try:
+                threshold_candidates[name] = run_threshold_research(
+                    scores,
+                    price_data=prices_by_symbol,
+                    regime=regime["regime"],
+                    strategy_name=name,
+                    config=config.threshold_research,
+                    allow_short=allow_short,
+                    periods_per_year=_periods_per_year(config.frequency),
+                    taker_fee_bps=config.taker_fee_bps,
+                    slippage_bps=config.slippage_bps,
+                )
+            except Exception as exc:
+                threshold_candidates[name] = {
+                    "strategy": name,
+                    "status": "error",
+                    "message": f"{type(exc).__name__}: {exc}",
+                    "surface": [],
+                    "stable_regions": [],
+                    "recommended_point": None,
+                }
     model_metrics = {
         name: _correlation_metrics(scores, target.reindex(scores.index))
         for name, scores in strategy_scores.items()
@@ -601,6 +649,7 @@ def run_ml_research(
             "regime": asdict(config.regime),
             "score": asdict(config.score),
             "portfolio": asdict(config.portfolio),
+            "threshold_research": asdict(config.threshold_research),
         },
         "sample": {
             "rows": len(features),
@@ -648,6 +697,15 @@ def run_ml_research(
             "history": allocation_rows,
             "risk_events": allocation_risk_events,
             "equal_asset_baseline": allocation_baseline_name,
+        },
+        "threshold_research": {
+            "enabled": config.threshold_research.enabled,
+            "candidates": threshold_candidates,
+            "skipped_candidates": threshold_skipped,
+            "note": (
+                "Stable regions require neighboring thresholds, rolling windows, "
+                "market regimes, and drawdown gates to agree."
+            ),
         },
         "correlations": correlations,
         "market_regime": {

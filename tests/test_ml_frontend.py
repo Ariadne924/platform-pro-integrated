@@ -36,6 +36,11 @@ def test_ml_page_uses_versioned_job_api_and_risk_contract() -> None:
     assert "FHS + EVT + HAR-RV" in html
     assert "历史 VaR（仅对照）" in html
     assert "risk_model" in html
+    assert "开平仓阈值二维曲面与稳定区" in html
+    assert "threshold_research" in html
+    assert "renderThresholdResearch" in html
+    assert "滚动窗口" in html
+    assert "★" in html
     assert "强制清仓" in html
     assert "risk_constraint_triggered" in html
     assert "loadExperiments" in html

@@ -9,6 +9,7 @@ from superplatform.ml.models import WalkForwardConfig
 from superplatform.ml.portfolio import PortfolioConfig
 from superplatform.ml.regime import RegimeConfig
 from superplatform.ml.research import MLResearchConfig, prepare_ml_panel, run_ml_research
+from superplatform.ml.threshold_research import ThresholdResearchConfig
 
 
 def _research_panel(periods: int = 120) -> pd.DataFrame:
@@ -238,3 +239,38 @@ def test_forced_liquidation_is_a_non_overridable_score_gate() -> None:
     assert result["asset_allocation"]["risk_events"]
     assert result["score"]["status"] == "rejected"
     assert "forced_liquidation" in result["score"]["gates_failed"]
+
+
+def test_ml_research_can_run_threshold_surface_for_ml_and_existing_strategy() -> None:
+    panel = _research_panel()
+    base = panel.drop_duplicates(["timestamp", "symbol"])[
+        ["timestamp", "symbol", "ret_1"]
+    ].copy()
+    base["position"] = np.where(base["ret_1"] >= 0, 1.0, 0.0)
+    threshold_config = ThresholdResearchConfig(
+        enabled=True,
+        entry_quantiles=(0.60, 0.75, 0.90),
+        exit_quantiles=(0.10, 0.25, 0.40),
+        rolling_window=30,
+        rolling_step=15,
+        min_neighbor_count=1,
+        min_stable_region_size=1,
+    )
+
+    result = run_ml_research(
+        panel,
+        config=replace(_config(), threshold_research=threshold_config),
+        existing_strategy_signals={
+            "binary_strategy": base[["timestamp", "symbol", "position"]]
+        },
+    )
+
+    threshold = result["threshold_research"]
+    assert threshold["enabled"] is True
+    assert threshold["candidates"]["ensemble"]["status"] == "completed"
+    assert threshold["candidates"]["ensemble"]["surface"]
+    assert (
+        threshold["candidates"]["binary_strategy"]["status"]
+        == "insufficient_signal_resolution"
+    )
+    assert result["config"]["threshold_research"]["rolling_window"] == 30

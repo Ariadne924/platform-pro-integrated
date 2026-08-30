@@ -129,6 +129,8 @@ def test_ml_capabilities_expose_risk_first_contract(client) -> None:
     assert {"lightgbm", "xgboost"}.issubset(details)
     assert payload["portfolio"]["causal_covariance"] is True
     assert payload["multi_frequency"]["future_timestamp_audit"] is True
+    assert payload["threshold_research"]["entry_exit_surface"] is True
+    assert payload["threshold_research"]["discrete_signal_guard"] is True
     assert "paired_block_bootstrap" in payload["comparison_metrics"]
     assert payload["research_only"] is True
 
@@ -287,3 +289,31 @@ def test_ml_job_supports_multifrequency_and_risk_parity(client) -> None:
     assert result["asset_allocation"]["latest"]["weights"]
     history = client.get("/api/v1/ml/experiments").json()
     assert history["count"] == 1
+
+
+def test_ml_job_can_run_entry_exit_threshold_surface(client) -> None:
+    request = _request()
+    request["threshold_research"] = {
+        "enabled": True,
+        "entry_quantiles": [0.60, 0.75, 0.90],
+        "exit_quantiles": [0.10, 0.25, 0.40],
+        "rolling_window": 30,
+        "rolling_step": 15,
+        "min_neighbor_count": 1,
+        "min_stable_region_size": 1,
+    }
+    submitted = client.post("/api/v1/ml/jobs", json=request)
+    assert submitted.status_code == 202, submitted.text
+    completed = _poll(client, submitted.json()["job_id"])
+    assert completed["status"] == "done", completed.get("error")
+    threshold = completed["result"]["threshold_research"]
+    assert threshold["enabled"] is True
+    assert threshold["candidates"]["ensemble"]["surface"]
+
+    invalid = _request()
+    invalid["threshold_research"] = {
+        "enabled": True,
+        "entry_quantiles": [0.90, 0.70],
+        "exit_quantiles": [0.10, 0.20],
+    }
+    assert client.post("/api/v1/ml/jobs", json=invalid).status_code == 422

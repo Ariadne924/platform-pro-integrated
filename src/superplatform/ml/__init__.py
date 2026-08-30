@@ -11,6 +11,11 @@ from superplatform.ml.portfolio import (
 from superplatform.ml.regime import RegimeConfig, detect_market_regime
 from superplatform.ml.risk import ScoreConfig, score_research_result, tail_risk_metrics
 from superplatform.ml.tail_models import DynamicRiskEstimate, estimate_dynamic_risk
+from superplatform.ml.threshold_research import (
+    ThresholdResearchConfig,
+    run_threshold_research,
+    threshold_positions,
+)
 
 __all__ = [
     "RegimeConfig",
@@ -18,6 +23,7 @@ __all__ = [
     "PortfolioConfig",
     "MultiFrequencyResult",
     "ScoreConfig",
+    "ThresholdResearchConfig",
     "WalkForwardConfig",
     "WalkForwardResult",
     "compare_strategy_returns",
@@ -28,5 +34,7 @@ __all__ = [
     "estimate_dynamic_risk",
     "score_research_result",
     "tail_risk_metrics",
+    "run_threshold_research",
+    "threshold_positions",
     "walk_forward_panel",
 ]

@@ -24,6 +24,7 @@ from superplatform.ml.regime import RegimeConfig
 from superplatform.ml.research import MLResearchConfig, run_ml_research
 from superplatform.ml.risk import ScoreConfig
 from superplatform.ml.tail_models import RISK_MODELS
+from superplatform.ml.threshold_research import ThresholdResearchConfig
 from superplatform.runtime.config import Config
 from superplatform.runtime.dual import resolve_strategy_ex, scan_dual_registries
 from superplatform.runtime.pipeline import OfflineRuntime
@@ -119,6 +120,47 @@ class PortfolioBody(BaseModel):
         return self
 
 
+class ThresholdResearchBody(BaseModel):
+    enabled: bool = False
+    entry_quantiles: list[float] = Field(
+        default_factory=lambda: [0.55, 0.65, 0.75, 0.85, 0.95],
+        min_length=2,
+        max_length=15,
+    )
+    exit_quantiles: list[float] = Field(
+        default_factory=lambda: [0.05, 0.15, 0.25, 0.35, 0.45],
+        min_length=2,
+        max_length=15,
+    )
+    rolling_window: int = Field(60, ge=10, le=100_000)
+    rolling_step: int = Field(20, ge=1, le=100_000)
+    calibration_fraction: float = Field(0.25, ge=0.10, le=0.50)
+    min_calibration_periods: int = Field(20, ge=10, le=100_000)
+    min_unique_signal_values: int = Field(5, ge=3, le=10_000)
+    min_neighbor_count: int = Field(2, ge=1, le=8)
+    min_neighbor_positive_ratio: float = Field(0.67, ge=0, le=1)
+    max_neighbor_return_dispersion: float = Field(0.20, gt=0, le=10)
+    max_drawdown_limit: float = Field(0.25, gt=0, le=1)
+    min_rolling_positive_ratio: float = Field(0.60, ge=0, le=1)
+    min_regime_non_loss_ratio: float = Field(0.50, ge=0, le=1)
+    min_stable_region_size: int = Field(2, ge=1, le=225)
+    max_candidates: int = Field(5, ge=1, le=20)
+
+    @model_validator(mode="after")
+    def validate_quantiles(self) -> ThresholdResearchBody:
+        for name, values in (
+            ("entry_quantiles", self.entry_quantiles),
+            ("exit_quantiles", self.exit_quantiles),
+        ):
+            if any(value <= 0 or value >= 1 for value in values):
+                raise ValueError(f"{name} must contain values in (0, 1)")
+            if sorted(set(values)) != values:
+                raise ValueError(f"{name} must be unique and increasing")
+        if max(self.exit_quantiles) >= max(self.entry_quantiles):
+            raise ValueError("entry quantiles must extend above exit quantiles")
+        return self
+
+
 class DataCoverageRequest(BaseModel):
     symbols: list[str] = Field(min_length=1, max_length=200)
     factors: list[str] = Field(default_factory=list, max_length=80)
@@ -172,6 +214,9 @@ class MLJobRequest(BaseModel):
     regime: RegimeBody = Field(default_factory=RegimeBody)
     risk: RiskBody = Field(default_factory=RiskBody)
     portfolio: PortfolioBody = Field(default_factory=PortfolioBody)
+    threshold_research: ThresholdResearchBody = Field(
+        default_factory=ThresholdResearchBody
+    )
 
     @model_validator(mode="after")
     def validate_request(self) -> MLJobRequest:
@@ -362,6 +407,13 @@ def _research_config(body: MLJobRequest) -> MLResearchConfig:
             var_limit=body.risk.var_limit,
             expected_shortfall_limit=body.risk.expected_shortfall_limit,
         ),
+        threshold_research=ThresholdResearchConfig(
+            **body.threshold_research.model_dump(
+                exclude={"entry_quantiles", "exit_quantiles"}
+            ),
+            entry_quantiles=tuple(body.threshold_research.entry_quantiles),
+            exit_quantiles=tuple(body.threshold_research.exit_quantiles),
+        ),
     )
 
 
@@ -544,6 +596,14 @@ async def ml_capabilities() -> dict[str, Any]:
         },
         "comparison_protocol": "shared-window-risk-first-v1",
         "existing_strategy_scoring": True,
+        "threshold_research": {
+            "entry_exit_surface": True,
+            "cost_aware_backtest": True,
+            "rolling_windows": True,
+            "market_regimes": ["bull", "bear", "sideways"],
+            "stable_region_method": "contiguous-neighborhood-gates-v1",
+            "discrete_signal_guard": True,
+        },
         "comparison_metrics": [
             "total_return",
             "sharpe",
