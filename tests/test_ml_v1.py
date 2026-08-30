@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import time
 
 import numpy as np
@@ -9,6 +10,8 @@ import pytest
 
 import superplatform_web.ml_jobs as ml_jobs
 import superplatform_web.routes.ml_v1 as ml_v1
+
+web_app_module = importlib.import_module("superplatform_web.app")
 
 
 def _panel(periods: int = 100) -> pd.DataFrame:
@@ -42,8 +45,13 @@ def _panel(periods: int = 100) -> pd.DataFrame:
 
 
 @pytest.fixture(autouse=True)
-def _fresh_jobs(monkeypatch):
+def _fresh_jobs(monkeypatch, tmp_path):
     ml_jobs._ml_jobs.clear()
+    monkeypatch.setattr(
+        web_app_module,
+        "_EXPERIMENTS_PATH",
+        tmp_path / "research_experiments.duckdb",
+    )
 
     async def fake_build_batch_panel(**kwargs):
         await asyncio.sleep(0)
@@ -117,6 +125,10 @@ def test_ml_capabilities_expose_risk_first_contract(client) -> None:
         "elastic_net",
         "tree_stumps",
     ]
+    details = {row["name"]: row for row in payload["model_details"]}
+    assert {"lightgbm", "xgboost"}.issubset(details)
+    assert payload["portfolio"]["causal_covariance"] is True
+    assert payload["multi_frequency"]["future_timestamp_audit"] is True
     assert "paired_block_bootstrap" in payload["comparison_metrics"]
     assert payload["research_only"] is True
 
@@ -129,6 +141,48 @@ def test_ml_lists_scoreable_registered_strategies(client) -> None:
     assert all(row["name"] for row in payload["strategies"])
 
 
+def test_ml_coverage_reports_local_cache_without_fetching(client, monkeypatch) -> None:
+    class FakeStore:
+        def series_range(self, table, symbol, frequency):
+            assert table == "pv_synthetic_perp_kline"
+            assert symbol == "BTC"
+            assert frequency == "1d"
+            return {
+                "min_ts": pd.Timestamp("2024-01-01", tz="UTC"),
+                "max_ts": pd.Timestamp("2024-04-29", tz="UTC"),
+                "count": 120,
+                "bar_width": pd.Timedelta(days=1),
+            }
+
+        def count_series_range(self, table, symbol, frequency, start, end):
+            del table, symbol, frequency, start, end
+            return 120
+
+    with monkeypatch.context() as patch:
+        patch.setattr(ml_v1.web_state, "store", FakeStore())
+        patch.setattr(
+            ml_v1.web_state,
+            "resolve_provider_for_data_type",
+            lambda exchange, market, data_type: f"{exchange}-{market}-{data_type}",
+        )
+        response = client.post(
+            "/api/v1/ml/coverage",
+            json={
+                "symbols": ["BTC"],
+                "frequencies": ["1d"],
+                "start": "2024-01-01T00:00:00Z",
+                "end": "2024-04-30T00:00:00Z",
+                "exchange": "synthetic",
+                "market_type": "perp",
+            },
+        )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ready"] is True
+    assert payload["rows"][0]["coverage_ratio"] == 1.0
+    assert payload["missing"] == []
+
+
 def test_ml_job_runs_training_backtest_and_score(client) -> None:
     submitted = client.post("/api/v1/ml/jobs", json=_request())
     assert submitted.status_code == 202, submitted.text
@@ -139,6 +193,10 @@ def test_ml_job_runs_training_backtest_and_score(client) -> None:
     assert result["result"]["equal_weight_benchmark"]["equity"]
     assert result["result"]["score"]["weights"]["upside_bonus"] == 5
     assert len(result["result"]["strategy_comparison"]["leaderboard"]) == 5
+    assert result["experiment_id"]
+    stored = client.get(f"/api/v1/ml/experiments/{result['experiment_id']}")
+    assert stored.status_code == 200
+    assert stored.json()["result"]["score"]["score"] <= 100
 
 
 def test_identical_ml_job_reuses_cached_result(client) -> None:
@@ -208,3 +266,24 @@ def test_ml_job_validation_and_unknown_status(client) -> None:
     reserved = _request()
     reserved["existing_strategies"] = ["ensemble"]
     assert client.post("/api/v1/ml/jobs", json=reserved).status_code == 422
+
+
+def test_ml_job_supports_multifrequency_and_risk_parity(client) -> None:
+    request = _request()
+    request["feature_frequencies"] = ["4h", "1d"]
+    request["portfolio"] = {
+        "method": "risk_parity",
+        "lookback_periods": 30,
+        "min_history_periods": 15,
+        "max_weight": 0.60,
+    }
+    submitted = client.post("/api/v1/ml/jobs", json=request)
+    assert submitted.status_code == 202, submitted.text
+    completed = _poll(client, submitted.json()["job_id"])
+    assert completed["status"] == "done", completed.get("error")
+    result = completed["result"]
+    assert result["multi_frequency"]["causal_join"] == "backward_asof"
+    assert result["asset_allocation"]["method"] == "risk_parity"
+    assert result["asset_allocation"]["latest"]["weights"]
+    history = client.get("/api/v1/ml/experiments").json()
+    assert history["count"] == 1

@@ -2,8 +2,16 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
-from superplatform.ml.models import WalkForwardConfig, walk_forward_panel
+from superplatform.ml.models import (
+    ModelDescriptor,
+    ModelFit,
+    WalkForwardConfig,
+    model_capabilities,
+    register_model_adapter,
+    walk_forward_panel,
+)
 
 
 def _panel(periods: int = 90, symbols: tuple[str, ...] = ("BTC", "ETH", "SOL")):
@@ -72,3 +80,47 @@ def test_walk_forward_requires_utc_panel() -> None:
         assert "UTC" in str(exc)
     else:
         raise AssertionError("naive panel must be rejected")
+
+
+def test_model_registry_accepts_future_estimators_without_engine_changes() -> None:
+    def adapter(x_train, y_train, x_test, config):
+        del x_train, y_train, config
+        return ModelFit(
+            predictions=np.zeros(len(x_test), dtype=float),
+            feature_weights=np.ones(x_test.shape[1], dtype=float),
+        )
+
+    register_model_adapter(
+        ModelDescriptor("test_plugin_model", "test", description="test adapter"),
+        adapter,
+        replace=True,
+    )
+    features, target = _panel()
+    result = walk_forward_panel(
+        features,
+        target,
+        config=WalkForwardConfig(min_train_periods=30, test_periods=10),
+        models=("test_plugin_model",),
+    )
+    assert result.predictions["test_plugin_model"].notna().any()
+    assert any(row["name"] == "test_plugin_model" for row in model_capabilities())
+
+
+@pytest.mark.parametrize("model", ["lightgbm", "xgboost"])
+def test_optional_boosting_adapter_trains_when_dependency_is_installed(model: str) -> None:
+    available = {row["name"]: row["available"] for row in model_capabilities()}
+    if not available[model]:
+        pytest.skip(f"optional dependency for {model} is not installed")
+    features, target = _panel(periods=55)
+    result = walk_forward_panel(
+        features,
+        target,
+        config=WalkForwardConfig(
+            min_train_periods=30,
+            test_periods=10,
+            gradient_boosting_estimators=20,
+        ),
+        models=(model,),
+    )
+    assert result.predictions[model].notna().any()
+    assert result.folds[0]["model_weights"][model]

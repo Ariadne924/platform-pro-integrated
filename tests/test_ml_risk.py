@@ -12,6 +12,8 @@ def test_tail_metrics_separate_downside_and_upside() -> None:
 
     assert metrics["historical_var"] > 0
     assert metrics["expected_shortfall"] > 0
+    assert metrics["risk_var"] >= metrics["historical_var"]
+    assert metrics["risk_expected_shortfall"] >= metrics["expected_shortfall"]
     assert metrics["expected_tail_gain"] > 0
     assert metrics["upside_capture"] is not None
 
@@ -62,3 +64,25 @@ def test_score_weights_match_agreed_risk_first_contract() -> None:
         "ic_rank_ic": 10,
         "upside_bonus": 5,
     }
+
+
+def test_dynamic_tail_risk_can_reject_when_historical_baseline_looks_safe() -> None:
+    score = score_research_result(
+        strategy_metrics={"total_return": 0.10, "sharpe": 1.0},
+        benchmark_metrics={"total_return": 0.05},
+        tail_metrics={
+            "max_drawdown": 0.10,
+            "historical_var": 0.01,
+            "expected_shortfall": 0.02,
+            "risk_var": 0.04,
+            "risk_expected_shortfall": 0.06,
+        },
+        fold_metrics=[{"sample_count": 10, "total_return": 0.02}],
+        regime_metrics={"sideways": {"sample_count": 10, "total_return": 0.01}},
+        ic=0.03,
+        rank_ic=0.04,
+    )
+
+    assert score["status"] == "rejected"
+    assert "var_limit" in score["gates_failed"]
+    assert "expected_shortfall_limit" in score["gates_failed"]

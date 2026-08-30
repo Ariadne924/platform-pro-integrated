@@ -33,6 +33,14 @@ dependencies = [
     "python-dotenv>=1.0.0",
 ]
 
+[project.optional-dependencies]
+# Heavy tabular estimators are optional so the core research workflow remains
+# runnable on a clean CPU-only checkout. Install with: uv sync --extra ml
+ml = [
+    "lightgbm>=4.5.0",
+    "xgboost>=2.1.0",
+]
+
 [tool.mypy]
 plugins = ["pandera.mypy"]
 

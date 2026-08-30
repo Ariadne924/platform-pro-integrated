@@ -8,13 +8,15 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from superplatform.ml.tail_models import estimate_dynamic_risk
+
 
 @dataclass(frozen=True)
 class ScoreConfig:
     confidence: float = 0.95
     max_drawdown_limit: float = 0.25
-    var_limit: float = 0.08
-    expected_shortfall_limit: float = 0.12
+    var_limit: float = 0.03
+    expected_shortfall_limit: float = 0.05
 
     def validate(self) -> None:
         if not 0.5 < self.confidence < 1:
@@ -39,23 +41,42 @@ def tail_risk_metrics(
     *,
     benchmark_returns: pd.Series | None = None,
     confidence: float = 0.95,
-) -> dict[str, float | int | None]:
+) -> dict[str, Any]:
     """Return separate loss-tail and upside-opportunity diagnostics."""
     if not 0.5 < confidence < 1:
         raise ValueError("confidence must be in (0.5, 1)")
     clean = _finite_returns(returns)
     if clean.empty:
         return {"sample_count": 0}
+    dynamic = estimate_dynamic_risk(
+        clean,
+        confidence=confidence,
+        evt_threshold_quantile=min(0.90, (0.50 + confidence) / 2.0),
+    )
     lower_quantile = float(clean.quantile(1.0 - confidence))
     upper_quantile = float(clean.quantile(confidence))
     lower_tail = clean[clean <= lower_quantile]
     upper_tail = clean[clean >= upper_quantile]
     equity = (1.0 + clean).cumprod()
     drawdown = equity.div(equity.cummax()).sub(1.0)
-    metrics: dict[str, float | int | None] = {
+    metrics: dict[str, Any] = {
         "sample_count": int(len(clean)),
         "historical_var": max(0.0, -lower_quantile),
         "expected_shortfall": max(0.0, -float(lower_tail.mean())),
+        "filtered_var": dynamic.filtered_var,
+        "filtered_expected_shortfall": dynamic.filtered_expected_shortfall,
+        "evt_var": dynamic.evt_var,
+        "evt_expected_shortfall": dynamic.evt_expected_shortfall,
+        "risk_var": dynamic.selected_var,
+        "risk_expected_shortfall": dynamic.selected_expected_shortfall,
+        "risk_model": dynamic.risk_model,
+        "evt_exceedances": dynamic.evt_exceedances,
+        "historical_annualized_volatility": (
+            dynamic.historical_annualized_volatility
+        ),
+        "har_annualized_volatility_forecast": (
+            dynamic.har_annualized_volatility_forecast
+        ),
         "max_drawdown": abs(float(drawdown.min())),
         "upper_quantile": upper_quantile,
         "expected_tail_gain": float(upper_tail.mean()),
@@ -111,8 +132,16 @@ def score_research_result(
     total_return = float(strategy_metrics.get("total_return") or 0.0)
     benchmark_return = float(benchmark_metrics.get("total_return") or 0.0)
     max_drawdown = float(tail_metrics.get("max_drawdown") or 0.0)
-    var = float(tail_metrics.get("historical_var") or 0.0)
-    expected_shortfall = float(tail_metrics.get("expected_shortfall") or 0.0)
+    var = float(
+        tail_metrics.get("risk_var")
+        or tail_metrics.get("historical_var")
+        or 0.0
+    )
+    expected_shortfall = float(
+        tail_metrics.get("risk_expected_shortfall")
+        or tail_metrics.get("expected_shortfall")
+        or 0.0
+    )
 
     safety = (
         _ratio_score(max_drawdown, config.max_drawdown_limit, 20.0)

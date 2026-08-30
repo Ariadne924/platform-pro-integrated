@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 
 from superplatform.ml.models import WalkForwardConfig
+from superplatform.ml.portfolio import PortfolioConfig
 from superplatform.ml.regime import RegimeConfig
 from superplatform.ml.research import MLResearchConfig, prepare_ml_panel, run_ml_research
 
@@ -194,3 +195,46 @@ def test_existing_strategy_without_oos_position_is_reported_not_fatal() -> None:
     )
     assert "empty_strategy" in result["existing_strategy_errors"]
     assert "empty_strategy" not in result["existing_strategy_scores"]
+
+
+def test_cross_section_can_compare_risk_parity_with_equal_asset_allocation() -> None:
+    result = run_ml_research(
+        _research_panel(),
+        config=replace(
+            _config(),
+            portfolio=PortfolioConfig(
+                method="risk_parity",
+                lookback_periods=30,
+                min_history_periods=15,
+                max_weight=0.60,
+            ),
+        ),
+    )
+    allocation = result["asset_allocation"]
+    assert allocation["method"] == "risk_parity"
+    assert allocation["latest"]["weights"]
+    assert allocation["equal_asset_baseline"] == "ensemble_equal_asset"
+    kinds = {
+        row["name"]: row["kind"]
+        for row in result["strategy_comparison"]["leaderboard"]
+    }
+    assert kinds["ensemble_equal_asset"] == "allocation_baseline"
+
+
+def test_forced_liquidation_is_a_non_overridable_score_gate() -> None:
+    result = run_ml_research(
+        _research_panel(),
+        config=replace(
+            _config(),
+            portfolio=PortfolioConfig(
+                method="risk_parity",
+                lookback_periods=30,
+                min_history_periods=15,
+                single_period_loss_limit=0.000001,
+                cooldown_periods=2,
+            ),
+        ),
+    )
+    assert result["asset_allocation"]["risk_events"]
+    assert result["score"]["status"] == "rejected"
+    assert "forced_liquidation" in result["score"]["gates_failed"]

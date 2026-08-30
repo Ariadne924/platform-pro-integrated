@@ -24,6 +24,7 @@ class MLJob:
     events: list[dict[str, Any]] = field(default_factory=list)
     result: dict[str, Any] | None = None
     error: str | None = None
+    experiment_id: str | None = None
     cancel_requested: bool = False
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
@@ -99,6 +100,7 @@ def ml_job_snapshot(job: MLJob) -> dict[str, Any]:
         "events": list(job.events),
         "result": job.result,
         "error": job.error,
+        "experiment_id": job.experiment_id,
         "created_at": job.created_at,
         "updated_at": job.updated_at,
     }

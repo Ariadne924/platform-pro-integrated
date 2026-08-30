@@ -7,13 +7,63 @@ Heavier estimators can implement the same fit/predict boundary later.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from importlib.util import find_spec
 from typing import Any, TypedDict
 
 import numpy as np
 import pandas as pd
 
-SUPPORTED_MODELS = ("ridge", "elastic_net", "tree_stumps")
+CORE_MODELS = ("ridge", "elastic_net", "tree_stumps")
+OPTIONAL_MODELS = ("lightgbm", "xgboost")
+SUPPORTED_MODELS = (*CORE_MODELS, *OPTIONAL_MODELS)
+DEFAULT_MODELS = CORE_MODELS
+
+
+@dataclass(frozen=True)
+class ModelDescriptor:
+    """Metadata for one estimator exposed through the research API."""
+
+    name: str
+    family: str
+    dependency: str | None = None
+    description: str = ""
+
+
+@dataclass(frozen=True)
+class ModelFit:
+    predictions: np.ndarray
+    feature_weights: np.ndarray
+
+
+ModelAdapter = Callable[
+    [np.ndarray, np.ndarray, np.ndarray, "WalkForwardConfig"],
+    ModelFit,
+]
+
+
+MODEL_DESCRIPTORS: dict[str, ModelDescriptor] = {
+    "ridge": ModelDescriptor("ridge", "linear", description="Stable L2 linear baseline"),
+    "elastic_net": ModelDescriptor(
+        "elastic_net", "linear", description="Sparse linear factor selector"
+    ),
+    "tree_stumps": ModelDescriptor(
+        "tree_stumps", "tree", description="Dependency-light nonlinear threshold baseline"
+    ),
+    "lightgbm": ModelDescriptor(
+        "lightgbm",
+        "gradient_boosting",
+        dependency="lightgbm",
+        description="Histogram GBDT for high-dimensional tabular factors",
+    ),
+    "xgboost": ModelDescriptor(
+        "xgboost",
+        "gradient_boosting",
+        dependency="xgboost",
+        description="Regularized scalable boosted-tree baseline",
+    ),
+}
 
 
 class TreeStump(TypedDict):
@@ -36,6 +86,10 @@ class WalkForwardConfig:
     min_feature_coverage: float = 0.8
     max_features: int = 80
     max_pairwise_correlation: float = 0.95
+    gradient_boosting_estimators: int = 200
+    gradient_boosting_learning_rate: float = 0.05
+    gradient_boosting_max_depth: int = 4
+    random_seed: int = 42
 
     def validate(self) -> None:
         if self.min_train_periods < 20:
@@ -52,6 +106,12 @@ class WalkForwardConfig:
             raise ValueError("max_features must be positive")
         if not 0 < self.max_pairwise_correlation <= 1:
             raise ValueError("max_pairwise_correlation must be in (0, 1]")
+        if self.gradient_boosting_estimators < 10:
+            raise ValueError("gradient_boosting_estimators must be at least 10")
+        if not 0 < self.gradient_boosting_learning_rate <= 1:
+            raise ValueError("gradient_boosting_learning_rate must be in (0, 1]")
+        if self.gradient_boosting_max_depth < 1:
+            raise ValueError("gradient_boosting_max_depth must be positive")
 
 
 @dataclass
@@ -154,6 +214,150 @@ def _predict_tree_stumps(x: np.ndarray, stumps: list[TreeStump]) -> np.ndarray:
     return predictions
 
 
+def _ridge_adapter(
+    x_train: np.ndarray,
+    y_train: np.ndarray,
+    x_test: np.ndarray,
+    config: WalkForwardConfig,
+) -> ModelFit:
+    weights = _fit_ridge(x_train, y_train, config.alpha)
+    return ModelFit(x_test @ weights, weights)
+
+
+def _elastic_net_adapter(
+    x_train: np.ndarray,
+    y_train: np.ndarray,
+    x_test: np.ndarray,
+    config: WalkForwardConfig,
+) -> ModelFit:
+    weights = _fit_elastic_net(
+        x_train,
+        y_train,
+        config.alpha,
+        config.elastic_net_l1_ratio,
+    )
+    return ModelFit(x_test @ weights, weights)
+
+
+def _tree_stumps_adapter(
+    x_train: np.ndarray,
+    y_train: np.ndarray,
+    x_test: np.ndarray,
+    config: WalkForwardConfig,
+) -> ModelFit:
+    del config
+    stumps = _fit_tree_stumps(x_train, y_train)
+    importance: np.ndarray = np.zeros(x_train.shape[1], dtype=float)
+    for stump in stumps:
+        importance[stump["feature_index"]] += abs(
+            stump["right_value"] - stump["left_value"]
+        )
+    return ModelFit(_predict_tree_stumps(x_test, stumps), importance)
+
+
+def _lightgbm_adapter(
+    x_train: np.ndarray,
+    y_train: np.ndarray,
+    x_test: np.ndarray,
+    config: WalkForwardConfig,
+) -> ModelFit:
+    try:
+        import lightgbm as lgb  # type: ignore[import-not-found]
+    except ImportError as exc:  # pragma: no cover - depends on optional extra
+        raise RuntimeError(
+            "lightgbm is not installed; install the project 'ml' extra"
+        ) from exc
+    training = lgb.Dataset(x_train, label=y_train, free_raw_data=False)
+    estimator = lgb.train(
+        {
+            "objective": "regression",
+            "learning_rate": config.gradient_boosting_learning_rate,
+            "max_depth": config.gradient_boosting_max_depth,
+            "seed": config.random_seed,
+            "num_threads": 1,
+            "verbosity": -1,
+        },
+        training,
+        num_boost_round=config.gradient_boosting_estimators,
+    )
+    weights = np.asarray(estimator.feature_importance(importance_type="gain"), dtype=float)
+    return ModelFit(np.asarray(estimator.predict(x_test), dtype=float), weights)
+
+
+def _xgboost_adapter(
+    x_train: np.ndarray,
+    y_train: np.ndarray,
+    x_test: np.ndarray,
+    config: WalkForwardConfig,
+) -> ModelFit:
+    try:
+        import xgboost as xgb  # type: ignore[import-not-found]
+    except ImportError as exc:  # pragma: no cover - depends on optional extra
+        raise RuntimeError(
+            "xgboost is not installed; install the project 'ml' extra"
+        ) from exc
+    training = xgb.DMatrix(x_train, label=y_train)
+    estimator = xgb.train(
+        {
+            "objective": "reg:squarederror",
+            "eta": config.gradient_boosting_learning_rate,
+            "max_depth": config.gradient_boosting_max_depth,
+            "seed": config.random_seed,
+            "nthread": 1,
+            "tree_method": "hist",
+        },
+        training,
+        num_boost_round=config.gradient_boosting_estimators,
+    )
+    importance = estimator.get_score(importance_type="gain")
+    weights = np.asarray(
+        [float(importance.get(f"f{index}", 0.0)) for index in range(x_train.shape[1])]
+    )
+    return ModelFit(
+        np.asarray(estimator.predict(xgb.DMatrix(x_test)), dtype=float), weights
+    )
+
+
+_MODEL_ADAPTERS: dict[str, ModelAdapter] = {
+    "ridge": _ridge_adapter,
+    "elastic_net": _elastic_net_adapter,
+    "tree_stumps": _tree_stumps_adapter,
+    "lightgbm": _lightgbm_adapter,
+    "xgboost": _xgboost_adapter,
+}
+
+
+def register_model_adapter(
+    descriptor: ModelDescriptor,
+    adapter: ModelAdapter,
+    *,
+    replace: bool = False,
+) -> None:
+    """Register a future model without changing the walk-forward engine."""
+    if descriptor.name in _MODEL_ADAPTERS and not replace:
+        raise ValueError(f"model adapter already registered: {descriptor.name}")
+    MODEL_DESCRIPTORS[descriptor.name] = descriptor
+    _MODEL_ADAPTERS[descriptor.name] = adapter
+
+
+def model_capabilities() -> list[dict[str, Any]]:
+    """Return model availability without importing optional heavy packages."""
+    rows: list[dict[str, Any]] = []
+    for name, descriptor in MODEL_DESCRIPTORS.items():
+        available = descriptor.dependency is None or find_spec(descriptor.dependency) is not None
+        rows.append(
+            {
+                "name": name,
+                "family": descriptor.family,
+                "available": available,
+                "dependency": descriptor.dependency,
+                "description": descriptor.description,
+                "default": name in DEFAULT_MODELS,
+            }
+        )
+    return rows
+
+
 def _screen_features(
     x_train: pd.DataFrame,
     y_train: pd.Series,
@@ -186,7 +390,7 @@ def walk_forward_panel(
     target: pd.Series,
     *,
     config: WalkForwardConfig | None = None,
-    models: tuple[str, ...] = SUPPORTED_MODELS,
+    models: tuple[str, ...] = DEFAULT_MODELS,
 ) -> WalkForwardResult:
     """Produce strict out-of-sample predictions for a timestamp/symbol panel."""
     config = config or WalkForwardConfig()
@@ -195,7 +399,7 @@ def walk_forward_panel(
     if not features.index.equals(target.index):
         target = target.reindex(features.index)
     normalized_models = tuple(dict.fromkeys(models))
-    unsupported = sorted(set(normalized_models) - set(SUPPORTED_MODELS))
+    unsupported = sorted(set(normalized_models) - set(_MODEL_ADAPTERS))
     if not normalized_models or unsupported:
         raise ValueError(f"unsupported models: {unsupported or list(models)}")
 
@@ -266,26 +470,9 @@ def walk_forward_panel(
         model_weights: dict[str, dict[str, float]] = {}
 
         for model in normalized_models:
-            if model == "tree_stumps":
-                stumps = _fit_tree_stumps(x_train, y_train)
-                predicted = _predict_tree_stumps(x_test, stumps) + target_mean
-                importance: np.ndarray = np.zeros(len(columns), dtype=float)
-                for stump in stumps:
-                    importance[stump["feature_index"]] += abs(
-                        stump["right_value"] - stump["left_value"]
-                    )
-                weights = importance
-            elif model == "elastic_net":
-                weights = _fit_elastic_net(
-                    x_train,
-                    y_train,
-                    config.alpha,
-                    config.elastic_net_l1_ratio,
-                )
-                predicted = x_test @ weights + target_mean
-            else:
-                weights = _fit_ridge(x_train, y_train, config.alpha)
-                predicted = x_test @ weights + target_mean
+            fitted = _MODEL_ADAPTERS[model](x_train, y_train, x_test, config)
+            predicted = fitted.predictions + target_mean
+            weights = fitted.feature_weights
             prediction_frame.loc[test_mask, model] = predicted
             fold_predictions.append(predicted)
             model_weights[model] = {

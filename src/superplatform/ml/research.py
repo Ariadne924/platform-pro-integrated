@@ -10,7 +10,8 @@ import pandas as pd
 
 from superplatform.consumption.backtest import BacktestResult, backtest
 from superplatform.ml.comparison import compare_strategy_returns
-from superplatform.ml.models import SUPPORTED_MODELS, WalkForwardConfig, walk_forward_panel
+from superplatform.ml.models import DEFAULT_MODELS, WalkForwardConfig, walk_forward_panel
+from superplatform.ml.portfolio import PortfolioConfig, build_portfolio_signals
 from superplatform.ml.regime import RegimeConfig, detect_market_regime
 from superplatform.ml.risk import ScoreConfig, score_research_result, tail_risk_metrics
 
@@ -25,10 +26,11 @@ class MLResearchConfig:
     frequency: str = "1d"
     taker_fee_bps: float = 4.0
     slippage_bps: float = 2.0
-    models: tuple[str, ...] = SUPPORTED_MODELS
+    models: tuple[str, ...] = DEFAULT_MODELS
     walk_forward: WalkForwardConfig = field(default_factory=WalkForwardConfig)
     regime: RegimeConfig = field(default_factory=RegimeConfig)
     score: ScoreConfig = field(default_factory=ScoreConfig)
+    portfolio: PortfolioConfig = field(default_factory=PortfolioConfig)
     reference_symbol: str | None = None
 
     def validate(self) -> None:
@@ -43,6 +45,7 @@ class MLResearchConfig:
         self.walk_forward.validate()
         self.regime.validate()
         self.score.validate()
+        self.portfolio.validate()
 
 
 def prepare_ml_panel(
@@ -399,6 +402,10 @@ def run_ml_research(
     }
     strategy_scores["ensemble"] = ensemble
     strategy_scores["equal_weight"] = baseline_score.dropna()
+    allocation_baseline_name: str | None = None
+    if config.research_mode == "cross_section" and config.portfolio.method != "equal_weight":
+        allocation_baseline_name = "ensemble_equal_asset"
+        strategy_scores[allocation_baseline_name] = ensemble
     if config.core_factor is not None:
         strategy_scores["core_factor"] = _equal_weight_factor_score(
             features[[config.core_factor]]
@@ -423,14 +430,28 @@ def run_ml_research(
     }
     backtest_payloads: dict[str, dict[str, Any]] = {}
     strategy_returns: dict[str, pd.Series] = {}
+    allocation_rows: list[dict[str, Any]] = []
+    allocation_risk_events: list[dict[str, Any]] = []
     for name, scores in strategy_scores.items():
-        signals = _scores_to_signals(
-            scores,
-            config.top_n,
-            name,
-            research_mode=config.research_mode,
-            allow_short=config.allow_short,
-        )
+        if name == "ensemble" and config.research_mode == "cross_section":
+            allocated = build_portfolio_signals(
+                scores,
+                prices,
+                top_n=config.top_n,
+                config=config.portfolio,
+                name=name,
+            )
+            signals = allocated.signals
+            allocation_rows = allocated.allocations
+            allocation_risk_events = allocated.risk_events
+        else:
+            signals = _scores_to_signals(
+                scores,
+                config.top_n,
+                name,
+                research_mode=config.research_mode,
+                allow_short=config.allow_short,
+            )
         result = backtest(signals, **kwargs)
         payload, returns = _backtest_payload(result)
         backtest_payloads[name] = payload
@@ -507,6 +528,12 @@ def run_ml_research(
             rank_ic=correlation["rank_ic"],
             config=config.score,
         )
+        if name == "ensemble" and allocation_risk_events:
+            scorecard["status"] = "rejected"
+            gates = list(scorecard.get("gates_failed", []))
+            if "forced_liquidation" not in gates:
+                gates.append("forced_liquidation")
+            scorecard["gates_failed"] = gates
         scorecards[name] = scorecard
         strategy_evidence[name] = {
             "backtest": backtest_payloads[name],
@@ -527,6 +554,11 @@ def run_ml_research(
             "ensemble": "derived_ensemble",
             "equal_weight": "non_ml_baseline",
             **(
+                {allocation_baseline_name: "allocation_baseline"}
+                if allocation_baseline_name is not None
+                else {}
+            ),
+            **(
                 {"core_factor": "non_ml_baseline"}
                 if config.core_factor is not None
                 else {}
@@ -541,6 +573,9 @@ def run_ml_research(
             "equal_weight",
             *(["core_factor"] if config.core_factor is not None else []),
         ],
+        "allocation_baselines": (
+            [allocation_baseline_name] if allocation_baseline_name is not None else []
+        ),
         "existing_strategies": list(existing_score_series),
     }
     comparison["details"] = strategy_evidence
@@ -565,6 +600,7 @@ def run_ml_research(
             "walk_forward": asdict(config.walk_forward),
             "regime": asdict(config.regime),
             "score": asdict(config.score),
+            "portfolio": asdict(config.portfolio),
         },
         "sample": {
             "rows": len(features),
@@ -587,6 +623,32 @@ def run_ml_research(
         ),
         "strategy": ml_payload,
         "equal_weight_benchmark": baseline_payload,
+        "asset_allocation": {
+            "enabled": config.research_mode == "cross_section",
+            "method": config.portfolio.method,
+            "constraints": {
+                "max_weight": config.portfolio.max_weight,
+                "risk_model": config.portfolio.risk_model,
+                "risk_lookback_periods": config.portfolio.risk_lookback_periods,
+                "ewma_decay": config.portfolio.ewma_decay,
+                "evt_threshold_quantile": config.portfolio.evt_threshold_quantile,
+                "evt_min_exceedances": config.portfolio.evt_min_exceedances,
+                "har_min_days": config.portfolio.har_min_days,
+                "var_limit": config.portfolio.var_limit,
+                "expected_shortfall_limit": config.portfolio.expected_shortfall_limit,
+                "confidence": config.portfolio.confidence,
+                "annual_volatility_limit": config.portfolio.annual_volatility_limit,
+                "soft_drawdown_limit": config.portfolio.soft_drawdown_limit,
+                "delever_drawdown_limit": config.portfolio.delever_drawdown_limit,
+                "hard_drawdown_limit": config.portfolio.hard_drawdown_limit,
+                "single_period_loss_limit": config.portfolio.single_period_loss_limit,
+                "cooldown_periods": config.portfolio.cooldown_periods,
+            },
+            "latest": allocation_rows[-1] if allocation_rows else None,
+            "history": allocation_rows,
+            "risk_events": allocation_risk_events,
+            "equal_asset_baseline": allocation_baseline_name,
+        },
         "correlations": correlations,
         "market_regime": {
             "reference_symbol": reference,

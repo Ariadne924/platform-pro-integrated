@@ -61,7 +61,9 @@ def _return_metrics(
         "win_rate": float((returns > 0).mean()),
         "max_drawdown": tails.get("max_drawdown"),
         "historical_var": tails.get("historical_var"),
-        "expected_shortfall": tails.get("expected_shortfall"),
+        "risk_var": tails.get("risk_var"),
+        "historical_expected_shortfall": tails.get("expected_shortfall"),
+        "expected_shortfall": tails.get("risk_expected_shortfall"),
     }
 
 
