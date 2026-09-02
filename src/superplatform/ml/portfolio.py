@@ -270,6 +270,7 @@ def build_portfolio_signals(
     risk_peak = 1.0
     cooldown_remaining = 0
     recovery_index = len(config.recovery_steps)
+    previous_risk_signature: tuple[str, tuple[str, ...]] = ("normal", ())
 
     for timestamp, group in clean_scores.groupby(level="timestamp", sort=True):
         period_return = 0.0
@@ -339,6 +340,13 @@ def build_portfolio_signals(
             scale = min(scale, config.expected_shortfall_limit / expected_shortfall)
         if annualized_volatility > 0:
             scale = min(scale, config.annual_volatility_limit / annualized_volatility)
+        active_limits: list[str] = []
+        if var > config.var_limit:
+            active_limits.append("var_limit")
+        if expected_shortfall > config.expected_shortfall_limit:
+            active_limits.append("expected_shortfall_limit")
+        if annualized_volatility > config.annual_volatility_limit:
+            active_limits.append("annual_volatility_limit")
         circuit_state = "normal"
         circuit_scale = 1.0
         if cooldown_remaining > 0:
@@ -367,6 +375,51 @@ def build_portfolio_signals(
             )
         scale = min(scale, circuit_scale)
         scale = float(np.clip(scale, 0.0, 1.0))
+        risk_signature = (circuit_state, tuple(active_limits))
+        if risk_signature != previous_risk_signature:
+            previous_state, previous_limits = previous_risk_signature
+            triggered = circuit_state != "normal" or bool(active_limits)
+            action = {
+                "warning": "reduce_exposure",
+                "delever": "forced_deleveraging",
+                "cooldown": "hold_cash",
+                "recovery": "staged_recovery",
+                "normal": "risk_limit_scaling" if active_limits else "resume_normal",
+            }[circuit_state]
+            risk_events.append(
+                {
+                    "timestamp": pd.Timestamp(timestamp).isoformat(),
+                    "event": "risk_triggered" if triggered else "risk_recovered",
+                    "reason": circuit_state if circuit_state != "normal" else (
+                        active_limits[0] if active_limits else "risk_cleared"
+                    ),
+                    "action": action,
+                    "state_from": previous_state,
+                    "state_to": circuit_state,
+                    "active_limits": active_limits,
+                    "previous_active_limits": list(previous_limits),
+                    "period_return": period_return,
+                    "drawdown": risk_drawdown,
+                    "equity": risk_equity,
+                    "risk_scale": scale,
+                    "circuit_scale": circuit_scale,
+                    "observed": {
+                        "var": var,
+                        "expected_shortfall": expected_shortfall,
+                        "annualized_volatility": annualized_volatility,
+                    },
+                    "thresholds": {
+                        "var_limit": config.var_limit,
+                        "expected_shortfall_limit": config.expected_shortfall_limit,
+                        "annual_volatility_limit": config.annual_volatility_limit,
+                        "soft_drawdown_limit": config.soft_drawdown_limit,
+                        "delever_drawdown_limit": config.delever_drawdown_limit,
+                        "hard_drawdown_limit": config.hard_drawdown_limit,
+                        "single_period_loss_limit": config.single_period_loss_limit,
+                    },
+                }
+            )
+            previous_risk_signature = risk_signature
         constrained = weights * scale
         previous_weights = constrained.copy()
         for symbol in ranked.index.astype(str):

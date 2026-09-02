@@ -42,6 +42,8 @@ def test_ml_page_uses_versioned_job_api_and_risk_contract() -> None:
     assert "滚动窗口" in html
     assert "★" in html
     assert "强制清仓" in html
+    assert "风险审计记录" in html
+    assert "风险事件" in html
     assert "risk_constraint_triggered" in html
     assert "loadExperiments" in html
     assert "非ML基准" in html
