@@ -7,7 +7,7 @@
 - 研究：IC/RankIC/ICIR/衰减/分层/换手 HTML 报告、前视硬门槛、S~D 评级 + 评级榜、偏差控制六查 + 合格判定，缓存按 (因子 × 数据版本) 键控。
 - 机器学习：多频率 Gold 因子面板、Ridge/Elastic Net/Tree Stumps 与可选 LightGBM/XGBoost、Expanding Walk-Forward（Purge/Embargo）、自动因子权重、风险平价/HRP、动态尾部风险和实验留档；支持开平仓阈值二维曲面、连续稳定区、滚动窗口与牛熊震荡稳健性检验，已有注册策略也可按相同样本外窗口、成本和风险门禁进入统一排行。当前定位为研究框架，不直接实盘下单。
 - 交易：策略出仓位权重、消费层转订单；回测（Sharpe/MaxDD）、`live` 模拟盘（敞口 100% 封顶、反转拆单、超资金拒单）、Binance testnet（key 只读环境变量）。
-- UI：`/`（行情 K线/净值/持仓）、`/explorer.html`（因子库/评级榜）、`/bias-control.html`（六查/合格判定/相关性矩阵）、`/ml.html`（机器学习研究）、`/about.html`，原生 JS + ECharts。
+- UI：`/`（行情 K线/净值/持仓）、`/explorer.html`（因子库/评级榜）、`/bias-control.html`（六查/合格判定/相关性矩阵）、`/ml.html`（机器学习研究）、`/risk-log.html`（独立风险审计记录）、`/about.html`，原生 JS + ECharts。
 
 ## 快速开始
 
@@ -22,7 +22,7 @@ python -m venv .venv
 python run.py        # http://localhost:8000 （自带 DEM-001 模拟盘会话）
 ```
 
-五页：`/`、`/explorer.html`、`/bias-control.html`、`/ml.html`、`/about.html`。
+六页：`/`、`/explorer.html`、`/bias-control.html`、`/ml.html`、`/risk-log.html`、`/about.html`。
 
 ## CLI 一览
 

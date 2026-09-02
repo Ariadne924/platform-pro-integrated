@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>风险记录中心｜Superplatform</title>
+  <style>
+    :root{--bg:#0b0e11;--panel:#161a1e;--panel2:#1e2329;--line:#2b3139;--text:#eaecef;--muted:#929aa5;--gold:#f0b90b;--green:#0ecb81;--red:#f6465d}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,"Microsoft YaHei",sans-serif}header{height:58px;display:flex;align-items:center;justify-content:space-between;padding:0 24px;border-bottom:1px solid var(--line);background:#111418}header b{color:var(--gold);font-size:18px}a{color:var(--muted);text-decoration:none}a:hover{color:var(--gold)}main{max-width:1500px;margin:auto;padding:16px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px;margin-bottom:14px}h2,h3{margin:0 0 12px}h3{font-size:15px;color:var(--gold)}.toolbar{display:grid;grid-template-columns:minmax(280px,2fr) minmax(150px,1fr) 110px;gap:10px}select,button{width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:5px;padding:9px}button{cursor:pointer;background:var(--gold);color:#111;font-weight:700;border:0}.note{color:var(--muted);font-size:12px}.cards{display:grid;grid-template-columns:repeat(5,minmax(120px,1fr));gap:10px}.card{background:var(--panel2);padding:12px;border-radius:6px;border:1px solid var(--line)}.card small{display:block;color:var(--muted)}.card strong{font-size:20px}.ok{color:var(--green)}.bad{color:var(--red)}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--line);font-size:12px;vertical-align:top}th{color:var(--muted);position:sticky;top:0;background:var(--panel)}.table-wrap{overflow:auto;max-height:560px}.pill{display:inline-block;border:1px solid var(--line);border-radius:20px;padding:2px 7px;margin:1px 3px 1px 0;color:var(--muted)}@media(max-width:850px){.toolbar{grid-template-columns:1fr}.cards{grid-template-columns:repeat(2,1fr)}}
+  </style>
+</head>
+<body>
+<header><b>Superplatform · 风险记录中心</b><span><a href="/ml.html">机器学习研究</a>　<a href="/">返回主平台</a></span></header>
+<main>
+  <section class="panel">
+    <h2>风险审计</h2>
+    <p class="note">独立读取已保存的机器学习实验。相同风险持续期间不会重复刷屏，只在风险触发、状态切换或恢复时记录。</p>
+    <div class="toolbar">
+      <select id="experiment" aria-label="选择实验"></select>
+      <select id="filter" aria-label="事件筛选" onchange="render()"><option value="all">全部事件</option><option value="risk_triggered">风险触发/状态切换</option><option value="forced_liquidation">强制清仓</option><option value="risk_recovered">恢复正常</option></select>
+      <button onclick="loadExperiments()">刷新</button>
+    </div>
+    <p id="source" class="note">正在加载实验记录…</p>
+  </section>
+  <section class="cards" id="cards"></section>
+  <section class="panel">
+    <h3>风险事件明细</h3>
+    <div class="table-wrap" id="events"></div>
+  </section>
+</main>
+<script>
+const $=id=>document.getElementById(id);let current=null;
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const pct=v=>v==null?'--':(Number(v)*100).toFixed(2)+'%';
+const labels={forced_liquidation:'强制清仓',risk_triggered:'风险触发',risk_recovered:'风险恢复',hard_drawdown:'硬回撤线',single_period_loss:'单周期损失',warning:'预警',delever:'强制降仓',cooldown:'冷静期',recovery:'分阶段恢复',var_limit:'VaR 超限',expected_shortfall_limit:'ES 超限',annual_volatility_limit:'波动率超限',risk_cleared:'风险解除',reduce_exposure:'降低敞口',forced_deleveraging:'强制降仓',hold_cash:'保持现金',staged_recovery:'分阶段恢复',risk_limit_scaling:'风险限额缩仓',resume_normal:'恢复正常'};
+const label=v=>labels[v]||v||'--';
+async function api(url){const r=await fetch(url);const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.detail||r.statusText);return data;}
+function fmtTime(v){if(!v)return'--';const d=new Date(v);return Number.isNaN(d.getTime())?v:d.toLocaleString('zh-CN',{hour12:false});}
+function limits(e){return(e.active_limits||[]).map(x=>`<span class="pill">${esc(label(x))}</span>`).join('')||'--';}
+function render(){const allocation=current?.result?.asset_allocation||{},all=allocation.risk_events||[],mode=$('filter').value,rows=mode==='all'?all:all.filter(e=>e.event===mode),latest=allocation.latest||{},liquidations=all.filter(e=>e.event==='forced_liquidation').length,recoveries=all.filter(e=>e.event==='risk_recovered').length,active=latest.risk_constraint_triggered?'已触发':'正常';$('cards').innerHTML=[['事件总数',all.length],['强制清仓',liquidations],['恢复记录',recoveries],['当前状态',label(latest.circuit_breaker_state||'normal')],['当前风险缩放',pct(latest.risk_scale)]].map(([k,v],i)=>`<div class="card"><small>${k}</small><strong class="${i===3?(active==='正常'?'ok':'bad'):''}">${esc(v)}</strong></div>`).join('');$('events').innerHTML=rows.length?`<table><thead><tr><th>时间</th><th>事件</th><th>原因/状态</th><th>处理动作</th><th>触发限制</th><th>回撤</th><th>单期收益</th><th>风险缩放</th></tr></thead><tbody>${[...rows].reverse().map(e=>`<tr><td>${esc(fmtTime(e.timestamp))}</td><td>${esc(label(e.event))}</td><td>${esc(label(e.reason))}</td><td>${esc(label(e.action||'forced_liquidation'))}</td><td>${limits(e)}</td><td>${pct(e.drawdown)}</td><td>${pct(e.period_return)}</td><td>${e.risk_scale==null?'--':pct(e.risk_scale)}</td></tr>`).join('')}</tbody></table>`:'<p class="note">该实验没有符合当前筛选条件的风险事件。旧实验可能只保存强制清仓，新实验会完整记录状态变化。</p>';}
+async function loadExperiment(){try{current=await api('/api/v1/ml/experiments/'+encodeURIComponent($('experiment').value));const req=current.request||{},allocation=current.result?.asset_allocation||{};$('source').innerHTML=`实验时间：${esc(fmtTime(current.created_at))} · 标的：${esc((req.symbols||[]).join(', ')||'--')} · 组合方法：${esc(req.portfolio?.method||'--')} · 记录规则：<b>状态变化才记录</b>`;render();}catch(e){$('source').innerHTML='<span class="bad">风险记录加载失败：'+esc(e.message)+'</span>';}}
+async function loadExperiments(){try{const data=await api('/api/v1/ml/experiments?limit=50'),rows=data.experiments||[];$('experiment').innerHTML=rows.map(x=>`<option value="${esc(x.experiment_id)}">${esc(fmtTime(x.created_at))} · ${esc((x.symbols||[]).join(', '))} · ${esc(x.portfolio_method||'--')}</option>`).join('');if(!rows.length){$('source').textContent='还没有可读取的机器学习实验。';$('cards').innerHTML='';$('events').innerHTML='';return;}$('experiment').onchange=loadExperiment;await loadExperiment();}catch(e){$('source').innerHTML='<span class="bad">实验列表加载失败：'+esc(e.message)+'</span>';}}
+loadExperiments();
+</script>
+</body>
+</html>

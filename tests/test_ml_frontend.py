@@ -9,6 +9,8 @@ def test_main_navigation_links_to_ml_research_page() -> None:
     html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
     assert "location.href='/ml.html'" in html
     assert "机器学习" in html
+    assert "location.href='/risk-log.html'" in html
+    assert "风险记录" in html
 
 
 def test_ml_page_uses_versioned_job_api_and_risk_contract() -> None:
@@ -42,7 +44,8 @@ def test_ml_page_uses_versioned_job_api_and_risk_contract() -> None:
     assert "滚动窗口" in html
     assert "★" in html
     assert "强制清仓" in html
-    assert "风险审计记录" in html
+    assert "风险记录中心" in html
+    assert "/risk-log.html" in html
     assert "风险事件" in html
     assert "risk_constraint_triggered" in html
     assert "loadExperiments" in html
@@ -54,3 +57,13 @@ def test_ml_page_uses_versioned_job_api_and_risk_contract() -> None:
     assert "/api/v1/ml/strategies" in html
     assert "/api/v1/ml/coverage" in html
     assert "检查本地数据" in html
+
+
+def test_standalone_risk_log_page_reads_saved_ml_experiments() -> None:
+    html = (ROOT / "web" / "risk-log.html").read_text(encoding="utf-8")
+    assert "风险记录中心" in html
+    assert "/api/v1/ml/experiments?limit=50" in html
+    assert "/api/v1/ml/experiments/" in html
+    assert "风险事件明细" in html
+    assert "强制清仓" in html
+    assert "状态变化才记录" in html
